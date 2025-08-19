@@ -313,8 +313,8 @@ wheels = [
 
 [[package]]
 name = "solaredge"
-version = "0.1.0"
-source = { virtual = "." }
+version = "0.4.0"
+source = { editable = "." }
 dependencies = [
     { name = "pytz" },
     { name = "requests" },
