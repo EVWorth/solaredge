@@ -1,0 +1,18 @@
+repos:
+-   hooks:
+    -   id: check-yaml
+    -   id: check-toml
+    -   id: no-commit-to-branch
+    repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+-   hooks:
+    -   id: ruff-check
+    -   id: ruff-format
+    repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.9
+-   hooks:
+    -   id: commitizen
+        stages:
+        - commit-msg
+    repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.8.3
