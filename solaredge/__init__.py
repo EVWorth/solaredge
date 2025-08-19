@@ -1,1 +1,1 @@
-from .solaredge import Solaredge, __version__
+from .monitoring import Solaredge, __version__
