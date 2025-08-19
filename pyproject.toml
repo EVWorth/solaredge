@@ -1,3 +1,8 @@
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+
 [project]
 authors = [{ name = "evworth" }]
 name = "solaredge"
