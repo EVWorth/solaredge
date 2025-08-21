@@ -6,11 +6,15 @@ build-backend = "uv_build"
 [project]
 authors = [{ name = "evworth" }]
 name = "solaredge"
-version = "0.4.0"
+version = "0.5.0.dev1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = "~=3.13.0"
-dependencies = ["pytz>=2025.2", "requests>=2.32.5"]
+dependencies = [
+    "httpx>=0.28.1",
+    "pytz>=2025.2",
+    "requests>=2.32.5",
+]
 
 [dependency-groups]
 dev = ["commitizen>=4.8.3", "pre-commit>=4.3.0", "ruff>=0.12.9"]
@@ -30,7 +34,7 @@ line-ending = "auto"
 
 [tool.ruff.lint]
 ignore = [
-    "D105",    #missing-docstring-in-init
+    "D107",    #missing-docstring-in-init
     "PLR2004", #Magic Values
     "D203",    #no-blank-line-before-class
     "D212",    #multi-line-summary-first-line
