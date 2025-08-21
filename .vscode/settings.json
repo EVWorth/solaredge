@@ -1,0 +1,10 @@
+{
+    "git.autofetch": true,
+    "python.createEnvironment.trigger": "off",
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "always",
+    },
+    "python.terminal.activateEnvInCurrentTerminal": true,
+}
