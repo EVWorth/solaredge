@@ -371,7 +371,7 @@ wheels = [
 ]
 
 [[package]]
-name = "solaredge"
+name = "solaredge-client"
 version = "0.5.0.dev1"
 source = { editable = "." }
 dependencies = [
