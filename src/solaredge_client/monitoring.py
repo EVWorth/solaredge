@@ -7,6 +7,7 @@ the async implementation (per repository plan).
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC
 from typing import Any
 from collections.abc import Iterable
@@ -14,6 +15,7 @@ from collections.abc import Iterable
 import httpx
 
 DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com"
+MAX_CONCURRENT_REQUESTS = 3
 
 
 class BaseMonitoringClient(ABC):
@@ -42,6 +44,8 @@ class BaseMonitoringClient(ABC):
 class AsyncMonitoringClient(BaseMonitoringClient):
     """Asynchronous client for the SolarEdge Monitoring API.
 
+    Automatically limits concurrent requests to 3 per the API specification.
+
     Usage:
         async with AsyncMonitoringClient(api_key) as client:
             overview = await client.get_overview(site_id)
@@ -61,6 +65,9 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         self._external_client = client is not None
         self._timeout = self._parse_timeout(timeout)
         self.client = client or httpx.AsyncClient(timeout=self._timeout)
+
+        # Semaphore to limit concurrent requests per SolarEdge API specification
+        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     async def __aenter__(self) -> AsyncMonitoringClient:
         """Enter the async context manager and return self.
@@ -85,15 +92,16 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         path: str,
         params: dict | None = None,
     ) -> Any:
-        url = self._build_url(path)
-        combined = {**self._default_params(), **(params or {})}
-        response = await self.client.request(
-            method=method,
-            url=url,
-            params=combined,
-        )
-        response.raise_for_status()
-        return response.json()
+        async with self._semaphore:  # Acquire semaphore before making request
+            url = self._build_url(path)
+            combined = {**self._default_params(), **(params or {})}
+            response = await self.client.request(
+                method=method,
+                url=url,
+                params=combined,
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def get_list(
         self,
