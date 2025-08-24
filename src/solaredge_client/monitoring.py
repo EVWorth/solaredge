@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC
-from typing import Any
+from typing import Any, Literal
 from collections.abc import Iterable
 
 import httpx
@@ -103,22 +103,35 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             response.raise_for_status()
             return response.json()
 
-    async def get_list(
+    async def get_site_list(
         self,
         size: int = 100,
         start_index: int = 0,
-        search_text: str = "",
-        sort_property: str = "",
-        sort_order: str = "ASC",
-        status: str = "Active,Pending",
+        search_text: str | None = None,
+        sort_property: str | None = None,
+        sort_order: Literal["ASC", "DESC"] = "ASC",
+        status: list[Literal["Active", "Pending", "Disabled"]] | Literal["All"] = [
+            "Active",
+            "Pending",
+        ],
     ) -> dict:
-        """Return a paginated list of sites for the account (async)."""
+        """Return a paginated list of sites for the account (async).
+
+        Args:
+            size: Number of sites to return per page (max 100)
+            start_index: Starting index for pagination
+            search_text: Text to search for across multiple fields. The API will
+                search in: Name, Notes, Email, Country, State, City, Zip, Full address
+            sort_property: Property to sort by
+            sort_order: Sort order ("ASC" or "DESC")
+            status: Site status filter ("Active,Pending" by default)
+        """
         path = "sites/list"
         params = {
             "size": size,
             "startIndex": start_index,
             "sortOrder": sort_order,
-            "status": status,
+            "status": status if status == "All" else ",".join(status),
         }
         if search_text:
             params["searchText"] = search_text
@@ -344,26 +357,35 @@ class MonitoringClient(BaseMonitoringClient):
         response.raise_for_status()
         return response.json()
 
-    def get_list(
+    def get_site_list(
         self,
         size: int = 100,
         start_index: int = 0,
-        search_text: str = "",
+        search_text: str | None = None,
         sort_property: str = "",
-        sort_order: str = "ASC",
-        status: str = "Active,Pending",
+        sort_order: Literal["ASC", "DESC"] = "ASC",
+        status: list[Literal["Active", "Pending", "Disabled"]] | Literal["All"] = [
+            "Active",
+            "Pending",
+        ],
     ) -> dict:
         """Return a paginated list of sites for the account (sync).
 
-        Parameters mirror the SolarEdge `/sites/list` endpoint and control
-        pagination, filtering and sorting.
+        Args:
+            size: Number of sites to return per page (max 100)
+            start_index: Starting index for pagination
+            search_text: Text to search for across multiple fields. The API will
+                search in: Name, Notes, Email, Country, State, City, Zip, Full address
+            sort_property: Property to sort by
+            sort_order: Sort order ("ASC" or "DESC")
+            status: Site status filter ("Active,Pending" by default)
         """
         path = "sites/list"
         params = {
             "size": size,
             "startIndex": start_index,
             "sortOrder": sort_order,
-            "status": status,
+            "status": status if status == "All" else ",".join(status),
         }
         if search_text:
             params["searchText"] = search_text
