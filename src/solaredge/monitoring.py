@@ -126,6 +126,12 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         if not self._external_client:
             await self.client.aclose()
 
+    async def aclose(self) -> None:
+        """Close the internal httpx.Client if owned by this instance."""
+        if self._external_client:
+            raise ValueError("Will not close externally provided httpx.Client.")
+        await self.client.aclose()
+
     async def _make_request(
         self,
         method: str,
@@ -655,6 +661,12 @@ class MonitoringClient(BaseMonitoringClient):
         """
         if not self._external_client:
             self.client.close()
+
+    def close(self) -> None:
+        """Close the internal httpx.Client if owned by this instance."""
+        if self._external_client:
+            raise ValueError("Will not close externally provided httpx.Client.")
+        self.client.close()
 
     def _make_request(self, method: str, path: str, params: dict | None = None) -> Any:
         """Perform a synchronous HTTP request and return parsed JSON.

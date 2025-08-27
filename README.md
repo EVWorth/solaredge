@@ -1,76 +1,105 @@
-# Solaredge
-API wrapper for Solaredge monitoring service.
+# SolarEdge Monitoring API Client
+
+A Python client library for the SolarEdge Monitoring API, providing both synchronous and asynchronous interfaces for accessing solar energy data.
 
 See https://www.solaredge.com/sites/default/files/se_monitoring_api.pdf
 
-## Create a new connection by supplying your Solaredge API key
-``` python
-s = solaredge.Solaredge("APIKEY")
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+  - [Synchronous Usage](#synchronous-usage)
+  - [Asynchronous Usage](#asynchronous-usage)
+- [Rate Limiting & Best Practices](#rate-limiting--best-practices)
+- [Development](#development)
+- [API Documentation](#api-documentation)
+
+## Features
+
+- **Sync & Async Support**: Choose between `MonitoringClient` (sync) and `AsyncMonitoringClient` (async)
+- **Full API Coverage**: All monitoring endpoints supported
+- **Type Hints**: Complete type annotations for better IDE support
+- **Rate Limiting**: Built-in awareness of API limits (3 concurrent requests)
+- **Context Manager Support**: Automatic resource cleanup
+
+## Installation
+
+```bash
+pip install solaredge
+poetry add solaredge
+uv add solaredge
 ```
 
-## API Requests
-11 API requests are supported. The methods return the parsed JSON response as a dict.
+## Quick Start
 
-``` python
-def get_list(self, size=100, startIndex=0, searchText="", sortProperty="", sortOrder='ASC', status='Active,Pending'):
+### Synchronous Usage
 
-def get_details(self, site_id):
+```python
+from solaredge import MonitoringClient
 
-def get_data_period(self, site_id):
+# Basic usage
+client = MonitoringClient(api_key="YOUR_API_KEY")
+sites = client.get_site_list()
+client.close()
 
-def get_energy(self, site_id, startDate, endDate, timeUnit='DAY'):
-
-def get_time_frame_energy(self, site_id, startDate, endDate, timeUnit='DAY'):
-
-def get_power(self, site_id, startTime, endTime):
-
-def get_overview(self, site_id):
-
-def get_power_details(self, site_id, startTime, endTime, meters=None):
-
-def get_energy_details(self, site_id, startTime, endTime, meters=None, timeUnit="DAY"):
-
-def get_current_power_flow(self, site_id):
-
-def get_storage_data(self, site_id, startTime, endTime, serials=None):
+# Context manager (recommended)
+with MonitoringClient("YOUR_API_KEY") as client:
+    site_details = []
+    sites = client.get_site_list()
+    for site in sites['sites']['list']:
+        site_details.append(
+            client.get_site_details(
+                site_id=site['id'],
+            )
+        )
 ```
 
-## Usage example
-``` python
-import solaredge
-import datetime
+### Asynchronous Usage
 
-apikey = 'XXXXXXXXXXXX'
-site_id = 'XXXXXXX'
+```python
+import asyncio
+from solaredge import AsyncMonitoringClient
 
-api = solaredge.Solaredge(apikey)
+async def main():
+    async with AsyncMonitoringClient(api_key="YOUR_API_KEY") as client:
+        sites = await client.get_site_list()
+        
+        # Concurrent requests (respecting 3 concurrent limit)
+        tasks = []
+        for site in sites['sites']['list']:  
+            task = client.get_site_details(site_id=site['id'])
+            tasks.append(task)
+        
+        site_details = await asyncio.gather(*tasks)
 
-lists = api.get_list(site_id)
-details = api.get_details(site_id)['details']
-dataperiod = api.get_data_period(site_id)
-overview = api.get_overview(site_id)["overview"]
-currentpowerflow =api.get_currentPowerFlow(site_id)
-
-# get total dateframe
-start_date = dataperiod['dataPeriod']['startDate']
-end_date = dataperiod['dataPeriod']['endDate']
-
-# per day data
-energy = api.get_energy(site_id, start_date, end_date)
-timeframeenergy = api.get_time_frame_energy(site_id, start_date, end_date)
-
-# calculate timeframe
-start_time = (datetime.datetime.now() - datetime.timedelta(hours = 1)).strftime('%Y-%m-%d %H:%M:%S')
-end_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-# per time data
-power = api.get_power(site_id ,start_time, end_time)
-powerdetails =api.get_power_details(site_id, start_time, end_time)
-energydetails =api.get_energy_details(site_id, start_time, end_time)
-storagedata =api.get_storage_data(site_id, start_time, end_time)
-
+asyncio.run(main())
 ```
 
-## TODO
-* Add support for bulk requests
-* Add API documentation
+## Rate Limiting & Best Practices
+
+- **Daily limit**: 300 requests per API Key and per site ID 
+- **Concurrency**: Maximum 3 concurrent requests from same IP
+- **Bulk operations**: Up to 100 site IDs per bulk request
+
+for more information see [page 8](https://www.solaredge.com/sites/default/files/se_monitoring_api.pdf) of the api documentation 
+
+
+## Development
+
+```bash
+# Install development dependencies
+uv sync
+uv run pre-commit install -t commit-msg
+```
+
+```bash
+# Commiting changes
+uv run cz c
+```
+
+## API Documentation
+
+For detailed API documentation including all parameters and response formats, see:
+- [SolarEdge Monitoring API Documentation](docs/SE_monitoring_API.md)
+- [Official API Reference](https://www.solaredge.com/sites/default/files/se_monitoring_api.pdf)
