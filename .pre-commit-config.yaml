@@ -9,7 +9,7 @@ repos:
     -   id: ruff-check
     -   id: ruff-format
     repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.9
+    rev: v0.12.11
 -   hooks:
     -   id: commitizen
         stages:
