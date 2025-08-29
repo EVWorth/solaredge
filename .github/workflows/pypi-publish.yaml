@@ -1,0 +1,30 @@
+on:
+  workflow_dispatch:
+  # Will enable when able to deploy
+#   push:
+#     tags:
+#       - "[0-9]+.[0-9]+.[0-9]+"
+  
+jobs:
+  pypi-publish:
+    name: Upload release to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/solaredge
+    permissions:
+      id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v1
+
+      - name: sync venv and build package with uv
+        run: |
+          uv sync
+          uv build
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
