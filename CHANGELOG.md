@@ -1,3 +1,9 @@
+## 1.1.0 (2025-08-30)
+
+### Feat
+
+- **pyproject**: Updated project to support python >=3.10
+
 ## 1.0.0 (2025-08-28)
 
 ### BREAKING CHANGE

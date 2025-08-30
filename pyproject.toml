@@ -6,7 +6,7 @@ build-backend = "uv_build"
 [project]
 authors = [{ name = "evworth" }]
 name = "solaredge"
-version = "1.0.0"
+version = "1.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
