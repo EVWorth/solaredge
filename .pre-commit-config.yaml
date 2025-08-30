@@ -1,3 +1,6 @@
+# To update pre-commit hooks run:
+# uv run pre-commit autoupdate
+
 repos:
 -   hooks:
     -   id: check-yaml

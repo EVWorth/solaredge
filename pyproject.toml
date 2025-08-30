@@ -9,7 +9,7 @@ name = "solaredge"
 version = "1.0.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">3.12.0"
+requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",
     "pytz>=2025.2",
