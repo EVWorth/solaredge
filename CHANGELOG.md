@@ -1,3 +1,9 @@
+## 1.1.1 (2025-08-31)
+
+### Fix
+
+- **monitoring**: Fixed incorrect strftime parsing
+
 ## 1.1.0 (2025-08-30)
 
 ### Feat
