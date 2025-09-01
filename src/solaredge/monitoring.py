@@ -289,8 +289,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/power"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         return await self._make_request(
             method="GET",
@@ -327,8 +327,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/powerDetails"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         if meters:
             params["meters"] = ",".join(meters)
@@ -362,8 +362,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/energyDetails"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
             "timeUnit": time_unit,
         }
         if meters:
@@ -394,8 +394,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/storageData"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         if serials:
             params["serials"] = ",".join(serials)
@@ -491,8 +491,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             method="GET",
             path=path,
             params={
-                "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
             },
         )
 
@@ -572,8 +572,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             method="GET",
             path=path,
             params={
-                "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "timeUnit": time_unit,
                 "meters": ",".join(meters) if meters else None,
             },
@@ -829,8 +829,8 @@ class MonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/power"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         return self._make_request(
             method="GET",
@@ -867,8 +867,8 @@ class MonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/powerDetails"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         if meters:
             params["meters"] = ",".join(meters)
@@ -902,8 +902,8 @@ class MonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/energyDetails"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
             "timeUnit": time_unit,
         }
         if meters:
@@ -934,8 +934,8 @@ class MonitoringClient(BaseMonitoringClient):
 
         path = f"site/{site_id}/storageData"
         params = {
-            "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         if serials:
             params["serials"] = ",".join(serials)
@@ -1031,8 +1031,8 @@ class MonitoringClient(BaseMonitoringClient):
             method="GET",
             path=path,
             params={
-                "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
             },
         )
 
@@ -1112,8 +1112,8 @@ class MonitoringClient(BaseMonitoringClient):
             method="GET",
             path=path,
             params={
-                "startTime": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "timeUnit": time_unit,
                 "meters": ",".join(meters) if meters else None,
             },
