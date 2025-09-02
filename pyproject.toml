@@ -30,6 +30,7 @@ dependencies = [
 
 [dependency-groups]
 dev = ["commitizen>=4.8.3", "pre-commit>=4.3.0", "ruff>=0.12.9"]
+docs = ["sphinx>=7.0", "furo", "myst-parser"]
 
 [tool.uv]
 required-version = ">=0.8.0"
