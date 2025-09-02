@@ -9,14 +9,14 @@ build:
     pre_install:
       # Install uv
       - curl -LsSf https://astral.sh/uv/install.sh | sh
-      - source $HOME/.local/bin/env
+      - . $HOME/.local/bin/env
 
       # Install dependencies into .venv using uv
       - uv python install 3.13
       - uv sync --frozen
-
-      # Activate the venv so sphinx runs in it
-      - eval "$(uv venv activate --env .venv)"
+      
+      # Activate the venv (POSIX-compatible way)
+      - . .venv/bin/activate
 
 sphinx:
   configuration: docs/conf.py
