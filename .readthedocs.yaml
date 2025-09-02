@@ -12,6 +12,9 @@ build:
       - $HOME/.local/bin/uv python install 3.13
       - $HOME/.local/bin/uv sync --frozen
       
+      # Install the package in editable mode so importlib.metadata can find it
+      - $HOME/.local/bin/uv pip install -e .
+      
       # Activate the venv (POSIX-compatible way)
       - . .venv/bin/activate
 
