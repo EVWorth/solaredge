@@ -2,16 +2,20 @@
 
 import os
 import sys
+import tomllib  # type: ignore[import-untyped]  # Python 3.13+ built-in
 from datetime import datetime
-from importlib.metadata import version
 
 # Add project root to sys.path so autodoc works
 sys.path.insert(0, os.path.abspath(".."))
 
+# Read version from pyproject.toml
+with open("../pyproject.toml", "rb") as f:
+    pyproject = tomllib.load(f)
+
 # -- Project information -----------------------------------------------------
 project = "solaredge"
 author = "Elliot Worth"
-release = version("solaredge")
+release = pyproject["project"]["version"]
 copyright = f"{datetime.now().year}, {author}"
 
 # -- General configuration ---------------------------------------------------
