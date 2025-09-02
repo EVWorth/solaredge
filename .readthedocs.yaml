@@ -9,7 +9,7 @@ build:
     pre_install:
       # Install uv
       - curl -LsSf https://astral.sh/uv/install.sh | sh
-      - export PATH="$HOME/.cargo/bin:$PATH"
+      - source $HOME/.local/bin/env
 
       # Install dependencies into .venv using uv
       - uv python install 3.13
