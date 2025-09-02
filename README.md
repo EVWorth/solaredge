@@ -1,9 +1,6 @@
-# SolarEdge Monitoring API Client
+# SolarEdge Client (Monitoring API)
 
 <p align="center">
-  <a href="https://github.com/EVWorth/solaredge/actions/workflows/validate.yaml?query=branch%3Amain">
-    <img src="https://img.shields.io/github/actions/workflow/status/EVWorth/solaredge/validate.yaml.svg?branch=main&label=Validate&logo=github&style=flat-square" alt="Validation Status" >
-  </a>
   <a href="https://solaredge.readthedocs.io">
     <img src="https://img.shields.io/readthedocs/solaredge.svg?logo=read-the-docs&logoColor=fff&style=flat-square" alt="Documentation Status">
   </a>
@@ -32,7 +29,7 @@
 
 
 
-A Python client library for the SolarEdge Monitoring API, providing both synchronous and asynchronous interfaces for accessing solar energy data.
+A Python client for the SolarEdge Monitoring API, providing both synchronous and asynchronous interfaces for accessing solar energy data.
 
 See https://www.solaredge.com/sites/default/files/se_monitoring_api.pdf
 
