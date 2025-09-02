@@ -7,13 +7,10 @@ build:
 
   jobs:
     pre_install:
-      # Install uv
+      # Install uv and use full path for subsequent commands
       - curl -LsSf https://astral.sh/uv/install.sh | sh
-      - . $HOME/.local/bin/env
-
-      # Install dependencies into .venv using uv
-      - uv python install 3.13
-      - uv sync --frozen
+      - $HOME/.local/bin/uv python install 3.13
+      - $HOME/.local/bin/uv sync --frozen
       
       # Activate the venv (POSIX-compatible way)
       - . .venv/bin/activate
