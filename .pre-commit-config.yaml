@@ -12,10 +12,10 @@ repos:
     -   id: ruff-check
     -   id: ruff-format
     repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.3
+    rev: v0.14.4
 -   hooks:
     -   id: commitizen
         stages:
         - commit-msg
     repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.9.1
+    rev: v4.10.0
