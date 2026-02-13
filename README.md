@@ -2,10 +2,10 @@
 
 <p align="center">
   <a href="https://solaredge.readthedocs.io">
-    <img src="https://img.shields.io/readthedocs/solaredge.svg?logo=read-the-docs&logoColor=fff&style=flat-square" alt="Documentation Status">
+    <img src="https://img.shields.io/readthedocs/solaredge?logo=read-the-docs&logoColor=fff&style=flat-square" alt="Documentation Status">
   </a>
   <a href="https://codecov.io/gh/EVWorth/solaredge">
-    <img src="https://img.shields.io/codecov/c/github/EVWorth/solaredge.svg?logo=codecov&logoColor=fff&style=flat-square" alt="Test coverage percentage">
+    <img src="https://img.shields.io/codecov/c/github/EVWorth/solaredge?logo=codecov&logoColor=fff&style=flat-square" alt="Test coverage percentage">
   </a>
 </p>
 <p align="center">
@@ -21,10 +21,10 @@
 </p>
 <p align="center">
   <a href="https://pypi.org/project/solaredge/">
-    <img src="https://img.shields.io/pypi/v/solaredge.svg?logo=python&logoColor=fff&style=flat-square" alt="PyPI Version">
+    <img src="https://img.shields.io/pypi/v/solaredge?logo=python&logoColor=fff&style=flat-square" alt="PyPI Version">
   </a>
-  <img src="https://img.shields.io/pypi/pyversions/solaredge.svg?style=flat-square&logo=python&logoColor=fff" alt="Supported Python versions">
-  <img src="https://img.shields.io/pypi/l/solaredge.svg?style=flat-square" alt="License">
+  <img src="https://img.shields.io/pypi/pyversions/solaredge?style=flat-square&logo=python&logoColor=fff" alt="Supported Python versions">
+  <img src="https://img.shields.io/pypi/l/solaredge?style=flat-square" alt="License">
 </p>
 
 
