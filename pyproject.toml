@@ -5,7 +5,7 @@ build-backend = "uv_build"
 
 [project]
 authors = [{ name = "evworth", email = "elliotworth@protonmail.com"}]
-license = "MIT"
+license = {text = "MIT"}
 name = "solaredge"
 version = "1.1.1"
 description = "A Python client library for the SolarEdge Monitoring API"
@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12", 
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     "httpx>=0.28.1",
