@@ -7,4 +7,8 @@
         "source.organizeImports": "always",
     },
     "python.terminal.activateEnvInCurrentTerminal": true,
+    "[yaml]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "redhat.vscode-yaml"
+    }
 }
