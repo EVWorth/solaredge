@@ -1,7 +1,5 @@
 """Tests for the monitoring module."""
 
-import pytest
-
 from solaredge import MonitoringClient
 
 
