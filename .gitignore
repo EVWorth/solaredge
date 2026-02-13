@@ -3,3 +3,9 @@ dist
 __pycache__
 .ruff_cache
 uv.lock
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

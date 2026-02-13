@@ -29,15 +29,18 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["commitizen>=4.8.3", "pre-commit>=4.3.0", "ruff>=0.12.9"]
+dev = ["commitizen", "pre-commit"]
+test = ["pytest", "pytest-cov"]
+validate = ["ruff"]
 
 [tool.uv]
 required-version = ">=0.8.0"
+default-groups = ["dev", "validate", "test"]
 
 [tool.ruff]
-line-length = 88         # Matches black
+line-length = 88
 show-fixes = true
-target-version = "py313"
+target-version = "py310"
 
 [tool.ruff.format]
 docstring-code-format = true
