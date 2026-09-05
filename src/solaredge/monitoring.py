@@ -10,6 +10,20 @@ from collections.abc import Iterable
 
 import httpx
 
+from . import _endpoints
+from ._endpoints import (
+    Meter,
+    Request,
+    TimeUnit,
+    SortOrder,
+    SiteStatus,
+    SystemUnits,
+    MeterReading,
+    SiteSortProperty,
+    ValidatedTimeUnit,
+    AccountSortProperty,
+)
+
 DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com"
 MAX_CONCURRENT_REQUESTS = 3
 
@@ -17,8 +31,9 @@ MAX_CONCURRENT_REQUESTS = 3
 class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interface
     """Shared helpers for monitoring clients.
 
-    Contains URL building, default params and simple timeout parsing. Concrete
-    clients (sync/async) should inherit this to reuse utilities.
+    Holds URL building, default params, timeout parsing and the request/response
+    plumbing that does not depend on whether I/O is blocking. Concrete clients
+    (sync/async) inherit this and supply only the transport.
     """
 
     def __init__(self, api_key: str, base_url: str | None = None):
@@ -38,15 +53,7 @@ class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interfac
 
     def _validate_timeframe(
         self,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR",
-            "HOUR",
-            "DAY",
-            "_ONE_WEEK_MAX",
-            "WEEK",
-            "MONTH",
-            "YEAR",
-        ],
+        time_unit: ValidatedTimeUnit,
         start_date: datetime,
         end_date: datetime,
     ) -> None:
@@ -54,27 +61,23 @@ class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interfac
 
         throws an error or returns None.
         """
-        day_delta = (end_date - start_date).days
+        _endpoints.validate_timeframe(time_unit, start_date, end_date)
 
-        if day_delta < 0:
-            raise ValueError("End date must be after start date.")
+    def _prepare(self, request: Request) -> tuple[str, dict[str, Any]]:
+        """Resolve a Request into the URL and query params to send.
 
-        if time_unit == "_ONE_WEEK_MAX":
-            if day_delta > 7:
-                raise ValueError("The maximum date range is 1 week (7 days).")
+        Params whose value is None are dropped: httpx encodes them as empty
+        query values rather than omitting them.
+        """
+        url = self._build_url(request.path)
+        combined = {**self._default_params(), **(request.params or {})}
+        return url, {k: v for k, v in combined.items() if v is not None}
 
-        if time_unit in ("QUARTER_OF_AN_HOUR", "HOUR"):
-            if day_delta > 31:
-                raise ValueError(
-                    f"For time_unit {time_unit}, "
-                    "the maximum date range is 1 month (31 days)."
-                )
-        if time_unit == "DAY":
-            if day_delta > 365:
-                raise ValueError(
-                    f"For time_unit {time_unit}, "
-                    "the maximum date range is 1 year (365 days)."
-                )
+    @staticmethod
+    def _parse_response(response: httpx.Response, raw: bool) -> Any:
+        """Raise for error status, then return raw bytes or parsed JSON."""
+        response.raise_for_status()
+        return response.content if raw else response.json()
 
 
 class AsyncMonitoringClient(BaseMonitoringClient):
@@ -128,53 +131,25 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             raise ValueError("Will not close externally provided httpx.Client.")
         await self.client.aclose()
 
-    async def _make_request(
-        self,
-        method: str,
-        path: str,
-        params: dict | None = None,
-        raw: bool = False,
-    ) -> Any:
-        """Perform a request and return parsed JSON, or raw bytes if `raw`.
-
-        Params whose value is None are dropped: httpx encodes them as empty
-        query values rather than omitting them.
-        """
+    async def _send(self, request: Request) -> Any:
+        """Send a prepared request, respecting the concurrency limit."""
         async with self._semaphore:  # Acquire semaphore before making request
-            url = self._build_url(path)
-            combined = {**self._default_params(), **(params or {})}
+            url, params = self._prepare(request)
             response = await self.client.request(
-                method=method,
+                method=request.method,
                 url=url,
-                params={k: v for k, v in combined.items() if v is not None},
+                params=params,
             )
-            response.raise_for_status()
-            return response.content if raw else response.json()
+            return self._parse_response(response, request.raw)
 
     async def get_site_list(
         self,
         size: int = 100,
         start_index: int = 0,
         search_text: str | None = None,
-        sort_property: Literal[
-            "Name",
-            "Country",
-            "State",
-            "City",
-            "Address",
-            "Zip",
-            "Status",
-            "PeakPower",
-            "InstallationDate",
-            "Amount",
-            "MaxSeverity",
-            "CreationTime",
-        ]
-        | None = None,
-        sort_order: Literal["ASC", "DESC"] = "ASC",
-        status: list[Literal["Active", "Pending", "Disabled"]]
-        | Literal["All"]
-        | None = None,
+        sort_property: SiteSortProperty | None = None,
+        sort_order: SortOrder = "ASC",
+        status: list[SiteStatus] | Literal["All"] | None = None,
     ) -> dict:
         """Return a paginated list of sites for the account (async).
 
@@ -187,70 +162,34 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             sort_order: Sort order ("ASC" or "DESC")
             status: Site status filter (["Active", "Pending"] by default)
         """
-        if status is None:
-            status = ["Active", "Pending"]
-
-        path = "sites/list"
-        params = {
-            "size": size,
-            "startIndex": start_index,
-            "sortOrder": sort_order,
-            "status": status if status == "All" else ",".join(status),
-        }
-        if search_text:
-            params["searchText"] = search_text
-        if sort_property:
-            params["sortProperty"] = sort_property
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return await self._send(
+            _endpoints.site_list(
+                size, start_index, search_text, sort_property, sort_order, status
+            )
         )
 
     async def get_site_details(self, site_id: int) -> dict:
         """Get site details (async)."""
-        path = f"site/{site_id}/details"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.site_details(site_id))
 
     async def get_site_data(self, site_ids: list[int]) -> dict:
         """Return the site's energy data period (start/end) (async)."""
-        if len(site_ids) > 100:
-            raise ValueError("Cannot request data for more than 100 sites at once.")
-        path = f"site/{','.join(map(str, site_ids))}/dataPeriod"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.site_data(site_ids))
 
     async def get_energy(
         self,
         site_ids: list[int],
         start_date: datetime,
         end_date: datetime,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
+        time_unit: TimeUnit = "DAY",
     ) -> dict:
         """Get aggregated energy for a site between two dates (async).
 
         this endpoint returns the same energy measurements
         that appear in the Site Dashboard.
         """
-        self._validate_timeframe(time_unit, start_date, end_date)
-
-        path = f"site/{','.join(map(str, site_ids))}/energy"
-        params = {
-            "startDate": start_date.strftime("%Y-%m-%d"),
-            "endDate": end_date.strftime("%Y-%m-%d"),
-            "timeUnit": time_unit,
-        }
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return await self._send(
+            _endpoints.energy(site_ids, start_date, end_date, time_unit)
         )
 
     async def get_time_frame_energy(
@@ -258,9 +197,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         site_ids: list[int],
         start_date: datetime,
         end_date: datetime,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
+        time_unit: TimeUnit = "DAY",
     ) -> dict:
         """Get time-frame energy (async).
 
@@ -268,18 +205,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         In sites with storage/backup, this may mean that results can differ from what appears in the Site Dashboard.
         Use the regular Site Energy API to obtain results that match the Site Dashboard calculation.
         """  # noqa: E501
-        self._validate_timeframe(time_unit, start_date, end_date)
-
-        path = f"site/{','.join(map(str, site_ids))}/timeFrameEnergy"
-        params = {
-            "startDate": start_date.strftime("%Y-%m-%d"),
-            "endDate": end_date.strftime("%Y-%m-%d"),
-            "timeUnit": time_unit,
-        }
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return await self._send(
+            _endpoints.time_frame_energy(site_ids, start_date, end_date, time_unit)
         )
 
     async def get_power(
@@ -289,57 +216,22 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         end_time: datetime,
     ) -> dict:
         """Return power measurements (15-minute resolution) for a timeframe (async)."""
-        self._validate_timeframe("QUARTER_OF_AN_HOUR", start_time, end_time)
-
-        path = f"site/{site_id}/power"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
-        )
+        return await self._send(_endpoints.power(site_id, start_time, end_time))
 
     async def get_overview(self, site_ids: list[int]) -> dict:
         """Return a site overview (async)."""
-        path = f"site/{','.join(map(str, site_ids))}/overview"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.overview(site_ids))
 
     async def get_power_details(
         self,
         site_id: int,
         start_time: datetime,
         end_time: datetime,
-        meters: Iterable[
-            Literal[
-                "Production",
-                "Consumption",
-                "SelfConsumption",
-                "FeedIn",
-                "Purchased",
-            ]
-        ]
-        | None = None,
+        meters: Iterable[Meter] | None = None,
     ) -> dict:
         """Return detailed power measurements including optional meters (async)."""
-        self._validate_timeframe("QUARTER_OF_AN_HOUR", start_time, end_time)
-
-        path = f"site/{site_id}/powerDetails"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        if meters:
-            params["meters"] = ",".join(meters)
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return await self._send(
+            _endpoints.power_details(site_id, start_time, end_time, meters)
         )
 
     async def get_energy_details(
@@ -347,44 +239,17 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         site_id: int,
         start_time: datetime,
         end_time: datetime,
-        meters: Iterable[
-            Literal[
-                "Production",
-                "Consumption",
-                "SelfConsumption",
-                "FeedIn",
-                "Purchased",
-            ]
-        ]
-        | None = None,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
+        meters: Iterable[Meter] | None = None,
+        time_unit: TimeUnit = "DAY",
     ) -> dict:
         """Return detailed energy breakdown (by meter/timeUnit) (async)."""
-        self._validate_timeframe(time_unit, start_time, end_time)
-
-        path = f"site/{site_id}/energyDetails"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "timeUnit": time_unit,
-        }
-        if meters:
-            params["meters"] = ",".join(meters)
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return await self._send(
+            _endpoints.energy_details(site_id, start_time, end_time, meters, time_unit)
         )
 
     async def get_current_power_flow(self, site_id: int) -> dict:
         """Return the current power flow (async)."""
-        path = f"site/{site_id}/currentPowerFlow"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.current_power_flow(site_id))
 
     async def get_storage_data(
         self,
@@ -394,19 +259,8 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         serials: Iterable[str] | None = None,
     ) -> dict:
         """Return storage (battery) measurements for the timeframe (async)."""
-        self._validate_timeframe("_ONE_WEEK_MAX", start_time, end_time)
-
-        path = f"site/{site_id}/storageData"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        if serials:
-            params["serials"] = ",".join(serials)
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return await self._send(
+            _endpoints.storage_data(site_id, start_time, end_time, serials)
         )
 
     async def get_site_user_image(
@@ -418,34 +272,18 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
     ) -> bytes:
         """Return the site image (async)."""
-        if name is None:
-            path = f"site/{site_id}/image"
-        else:
-            path = f"site/{site_id}/image/{name}"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            raw=True,
-            params={
-                "maxWidth": max_width,
-                "maxHeight": max_height,
-                "hash": hash,
-            },
+        return await self._send(
+            _endpoints.site_user_image(site_id, name, max_width, max_height, hash)
         )
 
     async def get_environmental_benefits(
         self,
         site_id: int,
-        system_units: Literal["Metrics", "Imperial"] | None = None,
+        system_units: SystemUnits | None = None,
     ) -> dict:
         """Return the environmental benefits (async)."""
-        path = f"site/{site_id}/envBenefits"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "systemUnits": system_units,
-            },
+        return await self._send(
+            _endpoints.environmental_benefits(site_id, system_units)
         )
 
     async def get_site_installer_image(
@@ -454,34 +292,18 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         name: str | None = None,
     ) -> bytes:
         """Return the site installer image (async)."""
-        if name is None:
-            path = f"site/{site_id}/installerImage"
-        else:
-            path = f"site/{site_id}/installerImage/{name}"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            raw=True,
-        )
+        return await self._send(_endpoints.site_installer_image(site_id, name))
 
     async def get_components_list(self, site_id: int) -> dict:
         """Return a list of inverters/SMIs in the specific site. (async)."""
-        path = f"equipment/{site_id}/list"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.components_list(site_id))
 
     async def get_inventory(self, site_id: int) -> dict:
         """Return the inventory of SolarEdge equipment in the site (async).
 
         Including inverters/SMIs, batteries, meters, gateways and sensors.
         """
-        path = f"site/{site_id}/inventory"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.inventory(site_id))
 
     async def get_inverter_technical_data(
         self,
@@ -491,15 +313,10 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         end_time: datetime,
     ) -> dict:
         """Return specific inverter data for a given timeframe (async)."""
-        self._validate_timeframe("_ONE_WEEK_MAX", start_time, end_time)
-        path = f"site/{site_id}/inverter/{serial_number}/data"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-            },
+        return await self._send(
+            _endpoints.inverter_technical_data(
+                site_id, serial_number, start_time, end_time
+            )
         )
 
     async def get_equipment_change_log(
@@ -511,42 +328,21 @@ class AsyncMonitoringClient(BaseMonitoringClient):
 
         This method is applicable to inverters, optimizers, batteries and gateways.
         """
-        path = f"site/{site_id}/{serial_number}/changeLog"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.equipment_change_log(site_id, serial_number))
 
     async def get_account_list(
         self,
         page_size: int = 100,
         start_index: int = 0,
         search_text: str | None = None,
-        sort_property: Literal[
-            "Name",
-            "country",
-            "city",
-            "address",
-            "zip",
-            "fax",
-            "phone",
-            "notes",
-        ]
-        | None = None,
-        sort_order: Literal["ASC", "DESC"] = "ASC",
+        sort_property: AccountSortProperty | None = None,
+        sort_order: SortOrder = "ASC",
     ) -> dict:
         """Return the account and list of sub-accounts (async)."""
-        path = "accounts/list"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "pageSize": min(page_size, 100),
-                "startIndex": start_index,
-                "searchText": search_text,
-                "sortProperty": sort_property,
-                "sortOrder": sort_order,
-            },
+        return await self._send(
+            _endpoints.account_list(
+                page_size, start_index, search_text, sort_property, sort_order
+            )
         )
 
     async def get_meters(
@@ -554,44 +350,21 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         site_id: int,
         start_time: datetime,
         end_time: datetime,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
-        meters: Iterable[
-            Literal[
-                "Production",
-                "Consumption",
-                "FeedIn",
-                "Purchased",
-            ]
-        ]
-        | None = None,
+        time_unit: TimeUnit = "DAY",
+        meters: Iterable[MeterReading] | None = None,
     ) -> dict:
         """Return a list of meters in the specific site. (async).
 
         Returns for each meter on site its lifetime energy reading,
         metadata and the device to which it's connected to.
         """
-        self._validate_timeframe(time_unit, start_time, end_time)
-        path = f"site/{site_id}/meters"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "timeUnit": time_unit,
-                "meters": ",".join(meters) if meters else None,
-            },
+        return await self._send(
+            _endpoints.meters(site_id, start_time, end_time, time_unit, meters)
         )
 
     async def get_sensor_list(self, site_id: int) -> dict:
         """Returns a list of all the sensors in the site, and the device to which they are connected.  (async)."""  # noqa: E501
-        path = f"equipment/{site_id}/sensors"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.sensor_list(site_id))
 
     async def get_sensor_data(
         self,
@@ -600,32 +373,15 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         end_date: datetime,
     ) -> dict:
         """Returns the data of all the sensors in the site, by the gateway they are connected to. (async)."""  # noqa: E501
-        self._validate_timeframe("_ONE_WEEK_MAX", start_date, end_date)
-        path = f"equipment/{site_id}/sensors"
-        return await self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "startTime": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
-                "endTime": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
-            },
-        )
+        return await self._send(_endpoints.sensor_data(site_id, start_date, end_date))
 
     async def get_current_api_version(self) -> dict:
         """Returns the current API version. (async)."""
-        path = "version/current"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.current_api_version())
 
     async def get_supported_api_versions(self) -> dict:
         """Returns a list of supported API versions. (async)."""
-        path = "version/supported"
-        return await self._make_request(
-            method="GET",
-            path=path,
-        )
+        return await self._send(_endpoints.supported_api_versions())
 
 
 class MonitoringClient(BaseMonitoringClient):
@@ -674,56 +430,24 @@ class MonitoringClient(BaseMonitoringClient):
             raise ValueError("Will not close externally provided httpx.Client.")
         self.client.close()
 
-    def _make_request(
-        self,
-        method: str,
-        path: str,
-        params: dict | None = None,
-        raw: bool = False,
-    ) -> Any:
-        """Perform a synchronous request, returning parsed JSON or raw bytes.
-
-        This mirrors the async `_make_request` helper but uses a blocking
-        httpx.Client. Params whose value is None are dropped: httpx encodes
-        them as empty query values rather than omitting them.
-        """
-        url = self._build_url(path)
-        combined = {
-            **self._default_params(),
-            **(params or {}),
-        }
+    def _send(self, request: Request) -> Any:
+        """Send a prepared request using the blocking client."""
+        url, params = self._prepare(request)
         response = self.client.request(
-            method=method,
+            method=request.method,
             url=url,
-            params={k: v for k, v in combined.items() if v is not None},
+            params=params,
         )
-        response.raise_for_status()
-        return response.content if raw else response.json()
+        return self._parse_response(response, request.raw)
 
     def get_site_list(
         self,
         size: int = 100,
         start_index: int = 0,
         search_text: str | None = None,
-        sort_property: Literal[
-            "Name",
-            "Country",
-            "State",
-            "City",
-            "Address",
-            "Zip",
-            "Status",
-            "PeakPower",
-            "InstallationDate",
-            "Amount",
-            "MaxSeverity",
-            "CreationTime",
-        ]
-        | None = None,
-        sort_order: Literal["ASC", "DESC"] = "ASC",
-        status: list[Literal["Active", "Pending", "Disabled"]]
-        | Literal["All"]
-        | None = None,
+        sort_property: SiteSortProperty | None = None,
+        sort_order: SortOrder = "ASC",
+        status: list[SiteStatus] | Literal["All"] | None = None,
     ) -> dict:
         """Return a paginated list of sites for the account (sync).
 
@@ -736,24 +460,10 @@ class MonitoringClient(BaseMonitoringClient):
             sort_order: Sort order ("ASC" or "DESC")
             status: Site status filter (["Active", "Pending"] by default)
         """
-        if status is None:
-            status = ["Active", "Pending"]
-
-        path = "sites/list"
-        params = {
-            "size": size,
-            "startIndex": start_index,
-            "sortOrder": sort_order,
-            "status": status if status == "All" else ",".join(status),
-        }
-        if search_text:
-            params["searchText"] = search_text
-        if sort_property:
-            params["sortProperty"] = sort_property
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return self._send(
+            _endpoints.site_list(
+                size, start_index, search_text, sort_property, sort_order, status
+            )
         )
 
     def get_site_details(self, site_id: int) -> dict:
@@ -761,58 +471,32 @@ class MonitoringClient(BaseMonitoringClient):
 
         Returns parsed JSON from `/site/{siteId}/details`.
         """
-        path = f"site/{site_id}/details"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.site_details(site_id))
 
     def get_site_data(self, site_ids: list[int]) -> dict:
         """Return the site's energy data period (start/end) (sync)."""
-        if len(site_ids) > 100:
-            raise ValueError("Cannot request data for more than 100 sites at once.")
-        path = f"site/{','.join(map(str, site_ids))}/dataPeriod"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.site_data(site_ids))
 
     def get_energy(
         self,
         site_ids: list[int],
         start_date: datetime,
         end_date: datetime,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
+        time_unit: TimeUnit = "DAY",
     ) -> dict:
         """Get aggregated energy for a site between two dates (sync).
 
         this endpoint returns the same energy measurements
         that appear in the Site Dashboard.
         """
-        self._validate_timeframe(time_unit, start_date, end_date)
-
-        path = f"site/{','.join(map(str, site_ids))}/energy"
-        params = {
-            "startDate": start_date.strftime("%Y-%m-%d"),
-            "endDate": end_date.strftime("%Y-%m-%d"),
-            "timeUnit": time_unit,
-        }
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
-        )
+        return self._send(_endpoints.energy(site_ids, start_date, end_date, time_unit))
 
     def get_time_frame_energy(
         self,
         site_ids: list[int],
         start_date: datetime,
         end_date: datetime,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
+        time_unit: TimeUnit = "DAY",
     ) -> dict:
         """Get time-frame energy (sync).
 
@@ -820,18 +504,8 @@ class MonitoringClient(BaseMonitoringClient):
         In sites with storage/backup, this may mean that results can differ from what appears in the Site Dashboard.
         Use the regular Site Energy API to obtain results that match the Site Dashboard calculation.
         """  # noqa: E501
-        self._validate_timeframe(time_unit, start_date, end_date)
-
-        path = f"site/{','.join(map(str, site_ids))}/timeFrameEnergy"
-        params = {
-            "startDate": start_date.strftime("%Y-%m-%d"),
-            "endDate": end_date.strftime("%Y-%m-%d"),
-            "timeUnit": time_unit,
-        }
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return self._send(
+            _endpoints.time_frame_energy(site_ids, start_date, end_date, time_unit)
         )
 
     def get_power(
@@ -841,57 +515,22 @@ class MonitoringClient(BaseMonitoringClient):
         end_time: datetime,
     ) -> dict:
         """Return power measurements (15-minute resolution) for a timeframe (sync)."""
-        self._validate_timeframe("QUARTER_OF_AN_HOUR", start_time, end_time)
-
-        path = f"site/{site_id}/power"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
-        )
+        return self._send(_endpoints.power(site_id, start_time, end_time))
 
     def get_overview(self, site_ids: list[int]) -> dict:
         """Return a site overview (sync)."""
-        path = f"site/{','.join(map(str, site_ids))}/overview"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.overview(site_ids))
 
     def get_power_details(
         self,
         site_id: int,
         start_time: datetime,
         end_time: datetime,
-        meters: Iterable[
-            Literal[
-                "Production",
-                "Consumption",
-                "SelfConsumption",
-                "FeedIn",
-                "Purchased",
-            ]
-        ]
-        | None = None,
+        meters: Iterable[Meter] | None = None,
     ) -> dict:
         """Return detailed power measurements including optional meters (sync)."""
-        self._validate_timeframe("QUARTER_OF_AN_HOUR", start_time, end_time)
-
-        path = f"site/{site_id}/powerDetails"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        if meters:
-            params["meters"] = ",".join(meters)
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return self._send(
+            _endpoints.power_details(site_id, start_time, end_time, meters)
         )
 
     def get_energy_details(
@@ -899,44 +538,17 @@ class MonitoringClient(BaseMonitoringClient):
         site_id: int,
         start_time: datetime,
         end_time: datetime,
-        meters: Iterable[
-            Literal[
-                "Production",
-                "Consumption",
-                "SelfConsumption",
-                "FeedIn",
-                "Purchased",
-            ]
-        ]
-        | None = None,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
+        meters: Iterable[Meter] | None = None,
+        time_unit: TimeUnit = "DAY",
     ) -> dict:
         """Return detailed energy breakdown (by meter/timeUnit) (sync)."""
-        self._validate_timeframe(time_unit, start_time, end_time)
-
-        path = f"site/{site_id}/energyDetails"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "timeUnit": time_unit,
-        }
-        if meters:
-            params["meters"] = ",".join(meters)
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return self._send(
+            _endpoints.energy_details(site_id, start_time, end_time, meters, time_unit)
         )
 
     def get_current_power_flow(self, site_id: int) -> dict:
         """Return the current power flow (sync)."""
-        path = f"site/{site_id}/currentPowerFlow"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.current_power_flow(site_id))
 
     def get_storage_data(
         self,
@@ -946,19 +558,8 @@ class MonitoringClient(BaseMonitoringClient):
         serials: Iterable[str] | None = None,
     ) -> dict:
         """Return storage (battery) measurements for the timeframe (sync)."""
-        self._validate_timeframe("_ONE_WEEK_MAX", start_time, end_time)
-
-        path = f"site/{site_id}/storageData"
-        params = {
-            "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        if serials:
-            params["serials"] = ",".join(serials)
-        return self._make_request(
-            method="GET",
-            path=path,
-            params=params,
+        return self._send(
+            _endpoints.storage_data(site_id, start_time, end_time, serials)
         )
 
     def get_site_user_image(
@@ -969,36 +570,18 @@ class MonitoringClient(BaseMonitoringClient):
         max_height: int | None = None,
         hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
     ) -> bytes:
-        """Return the site image (async)."""
-        if name is None:
-            path = f"site/{site_id}/image"
-        else:
-            path = f"site/{site_id}/image/{name}"
-        return self._make_request(
-            method="GET",
-            path=path,
-            raw=True,
-            params={
-                "maxWidth": max_width,
-                "maxHeight": max_height,
-                "hash": hash,
-            },
+        """Return the site image (sync)."""
+        return self._send(
+            _endpoints.site_user_image(site_id, name, max_width, max_height, hash)
         )
 
     def get_environmental_benefits(
         self,
         site_id: int,
-        system_units: Literal["Metrics", "Imperial"] | None = None,
+        system_units: SystemUnits | None = None,
     ) -> dict:
-        """Return the environmental benefits (async)."""
-        path = f"site/{site_id}/envBenefits"
-        return self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "systemUnits": system_units,
-            },
-        )
+        """Return the environmental benefits (sync)."""
+        return self._send(_endpoints.environmental_benefits(site_id, system_units))
 
     def get_site_installer_image(
         self,
@@ -1006,34 +589,18 @@ class MonitoringClient(BaseMonitoringClient):
         name: str | None = None,
     ) -> bytes:
         """Return the site installer image (sync)."""
-        if name is None:
-            path = f"site/{site_id}/installerImage"
-        else:
-            path = f"site/{site_id}/installerImage/{name}"
-        return self._make_request(
-            method="GET",
-            path=path,
-            raw=True,
-        )
+        return self._send(_endpoints.site_installer_image(site_id, name))
 
     def get_components_list(self, site_id: int) -> dict:
         """Return a list of inverters/SMIs in the specific site. (sync)."""
-        path = f"equipment/{site_id}/list"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.components_list(site_id))
 
     def get_inventory(self, site_id: int) -> dict:
         """Return the inventory of SolarEdge equipment in the site (sync).
 
         Including inverters/SMIs, batteries, meters, gateways and sensors.
         """
-        path = f"site/{site_id}/inventory"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.inventory(site_id))
 
     def get_inverter_technical_data(
         self,
@@ -1043,15 +610,10 @@ class MonitoringClient(BaseMonitoringClient):
         end_time: datetime,
     ) -> dict:
         """Return specific inverter data for a given timeframe (sync)."""
-        self._validate_timeframe("_ONE_WEEK_MAX", start_time, end_time)
-        path = f"site/{site_id}/inverter/{serial_number}/data"
-        return self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-            },
+        return self._send(
+            _endpoints.inverter_technical_data(
+                site_id, serial_number, start_time, end_time
+            )
         )
 
     def get_equipment_change_log(
@@ -1063,42 +625,21 @@ class MonitoringClient(BaseMonitoringClient):
 
         This method is applicable to inverters, optimizers, batteries and gateways.
         """
-        path = f"site/{site_id}/{serial_number}/changeLog"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.equipment_change_log(site_id, serial_number))
 
     def get_account_list(
         self,
         page_size: int = 100,
         start_index: int = 0,
         search_text: str | None = None,
-        sort_property: Literal[
-            "Name",
-            "country",
-            "city",
-            "address",
-            "zip",
-            "fax",
-            "phone",
-            "notes",
-        ]
-        | None = None,
-        sort_order: Literal["ASC", "DESC"] = "ASC",
+        sort_property: AccountSortProperty | None = None,
+        sort_order: SortOrder = "ASC",
     ) -> dict:
         """Return the account and list of sub-accounts (sync)."""
-        path = "accounts/list"
-        return self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "pageSize": min(page_size, 100),
-                "startIndex": start_index,
-                "searchText": search_text,
-                "sortProperty": sort_property,
-                "sortOrder": sort_order,
-            },
+        return self._send(
+            _endpoints.account_list(
+                page_size, start_index, search_text, sort_property, sort_order
+            )
         )
 
     def get_meters(
@@ -1106,44 +647,21 @@ class MonitoringClient(BaseMonitoringClient):
         site_id: int,
         start_time: datetime,
         end_time: datetime,
-        time_unit: Literal[
-            "QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"
-        ] = "DAY",
-        meters: Iterable[
-            Literal[
-                "Production",
-                "Consumption",
-                "FeedIn",
-                "Purchased",
-            ]
-        ]
-        | None = None,
+        time_unit: TimeUnit = "DAY",
+        meters: Iterable[MeterReading] | None = None,
     ) -> dict:
         """Return a list of meters in the specific site. (sync).
 
         Returns for each meter on site its lifetime energy reading,
         metadata and the device to which it's connected to.
         """
-        self._validate_timeframe(time_unit, start_time, end_time)
-        path = f"site/{site_id}/meters"
-        return self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "timeUnit": time_unit,
-                "meters": ",".join(meters) if meters else None,
-            },
+        return self._send(
+            _endpoints.meters(site_id, start_time, end_time, time_unit, meters)
         )
 
     def get_sensor_list(self, site_id: int) -> dict:
         """Returns a list of all the sensors in the site, and the device to which they are connected.  (sync)."""  # noqa: E501
-        path = f"equipment/{site_id}/sensors"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.sensor_list(site_id))
 
     def get_sensor_data(
         self,
@@ -1152,29 +670,12 @@ class MonitoringClient(BaseMonitoringClient):
         end_date: datetime,
     ) -> dict:
         """Returns the data of all the sensors in the site, by the gateway they are connected to. (sync)."""  # noqa: E501
-        self._validate_timeframe("_ONE_WEEK_MAX", start_date, end_date)
-        path = f"equipment/{site_id}/sensors"
-        return self._make_request(
-            method="GET",
-            path=path,
-            params={
-                "startTime": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
-                "endTime": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
-            },
-        )
+        return self._send(_endpoints.sensor_data(site_id, start_date, end_date))
 
     def get_current_api_version(self) -> dict:
         """Returns the current API version. (sync)."""
-        path = "version/current"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.current_api_version())
 
     def get_supported_api_versions(self) -> dict:
         """Returns a list of supported API versions. (sync)."""
-        path = "version/supported"
-        return self._make_request(
-            method="GET",
-            path=path,
-        )
+        return self._send(_endpoints.supported_api_versions())
