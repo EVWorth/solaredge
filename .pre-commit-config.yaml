@@ -1,5 +1,5 @@
 # To update pre-commit hooks run:
-# uv run pre-commit autoupdate
+# uv run pre-commit autoupdate --freeze
 
 repos:
 -   hooks:
@@ -7,15 +7,15 @@ repos:
     -   id: check-toml
     -   id: no-commit-to-branch
     repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
 -   hooks:
     -   id: ruff-check
     -   id: ruff-format
     repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.5
+    rev: 1f1e8bf348ff38fc88619a38d3ca4d9c56abea49 # frozen: v0.16.5
 -   hooks:
     -   id: commitizen
         stages:
         - commit-msg
     repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.18.0
+    rev: d910b66e2686a3ef6c3f438dec0f63ba3cf8d7ee # frozen: v4.18.0

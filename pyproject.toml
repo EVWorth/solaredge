@@ -26,7 +26,6 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.28.1",
-    "pytz>=2026.2",
 ]
 
 [dependency-groups]
