@@ -23,6 +23,11 @@ from ._endpoints import (
     ValidatedTimeUnit,
     AccountSortProperty,
 )
+from .exceptions import (
+    SolarEdgeResponseError,
+    redact_url,
+    error_from_response,
+)
 
 DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com"
 MAX_CONCURRENT_REQUESTS = 3
@@ -75,9 +80,26 @@ class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interfac
 
     @staticmethod
     def _parse_response(response: httpx.Response, raw: bool) -> Any:
-        """Raise for error status, then return raw bytes or parsed JSON."""
-        response.raise_for_status()
-        return response.content if raw else response.json()
+        """Return raw bytes or parsed JSON, translating failures.
+
+        Raises a SolarEdgeError subclass rather than an httpx exception, so
+        callers never need to depend on this library's transport. The original
+        httpx error is preserved as __cause__.
+        """
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise error_from_response(response) from exc
+
+        if raw:
+            return response.content
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise SolarEdgeResponseError(
+                f"The API returned a non-JSON body (HTTP {response.status_code}) "
+                f"for {redact_url(response.request.url)}"
+            ) from exc
 
 
 class AsyncMonitoringClient(BaseMonitoringClient):
@@ -126,9 +148,13 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             await self.client.aclose()
 
     async def aclose(self) -> None:
-        """Close the internal httpx.Client if owned by this instance."""
+        """Close the internal httpx.AsyncClient if this instance created it.
+
+        Does nothing when the client was supplied by the caller, who owns its
+        lifetime. This matches __aexit__, which no-ops in the same case.
+        """
         if self._external_client:
-            raise ValueError("Will not close externally provided httpx.Client.")
+            return
         await self.client.aclose()
 
     async def _send(self, request: Request) -> Any:
@@ -269,11 +295,19 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         name: str | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
+        image_hash: int | None = None,
     ) -> bytes:
-        """Return the site image (async)."""
+        """Return the site image (async).
+
+        Args:
+            site_id: The site to fetch the image for.
+            name: Optional image name; the default image is returned without it.
+            max_width: Optional maximum width in pixels.
+            max_height: Optional maximum height in pixels.
+            image_hash: Optional cache-validation hash (the API's `hash` param).
+        """
         return await self._send(
-            _endpoints.site_user_image(site_id, name, max_width, max_height, hash)
+            _endpoints.site_user_image(site_id, name, max_width, max_height, image_hash)
         )
 
     async def get_environmental_benefits(
@@ -425,9 +459,13 @@ class MonitoringClient(BaseMonitoringClient):
             self.client.close()
 
     def close(self) -> None:
-        """Close the internal httpx.Client if owned by this instance."""
+        """Close the internal httpx.Client if this instance created it.
+
+        Does nothing when the client was supplied by the caller, who owns its
+        lifetime. This matches __exit__, which no-ops in the same case.
+        """
         if self._external_client:
-            raise ValueError("Will not close externally provided httpx.Client.")
+            return
         self.client.close()
 
     def _send(self, request: Request) -> Any:
@@ -568,11 +606,19 @@ class MonitoringClient(BaseMonitoringClient):
         name: str | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
+        image_hash: int | None = None,
     ) -> bytes:
-        """Return the site image (sync)."""
+        """Return the site image (sync).
+
+        Args:
+            site_id: The site to fetch the image for.
+            name: Optional image name; the default image is returned without it.
+            max_width: Optional maximum width in pixels.
+            max_height: Optional maximum height in pixels.
+            image_hash: Optional cache-validation hash (the API's `hash` param).
+        """
         return self._send(
-            _endpoints.site_user_image(site_id, name, max_width, max_height, hash)
+            _endpoints.site_user_image(site_id, name, max_width, max_height, image_hash)
         )
 
     def get_environmental_benefits(
