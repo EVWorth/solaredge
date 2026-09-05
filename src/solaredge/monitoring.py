@@ -14,7 +14,7 @@ DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com"
 MAX_CONCURRENT_REQUESTS = 3
 
 
-class BaseMonitoringClient(ABC):
+class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interface
     """Shared helpers for monitoring clients.
 
     Contains URL building, default params and simple timeout parsing. Concrete
@@ -172,10 +172,9 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         ]
         | None = None,
         sort_order: Literal["ASC", "DESC"] = "ASC",
-        status: list[Literal["Active", "Pending", "Disabled"]] | Literal["All"] = [
-            "Active",
-            "Pending",
-        ],
+        status: list[Literal["Active", "Pending", "Disabled"]]
+        | Literal["All"]
+        | None = None,
     ) -> dict:
         """Return a paginated list of sites for the account (async).
 
@@ -186,8 +185,11 @@ class AsyncMonitoringClient(BaseMonitoringClient):
                 search in: Name, Notes, Email, Country, State, City, Zip, Full address
             sort_property: Property to sort by
             sort_order: Sort order ("ASC" or "DESC")
-            status: Site status filter ("Active,Pending" by default)
+            status: Site status filter (["Active", "Pending"] by default)
         """
+        if status is None:
+            status = ["Active", "Pending"]
+
         path = "sites/list"
         params = {
             "size": size,
@@ -413,7 +415,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         name: str | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        hash: int | None = None,
+        hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
     ) -> bytes:
         """Return the site image (async)."""
         if name is None:
@@ -719,10 +721,9 @@ class MonitoringClient(BaseMonitoringClient):
         ]
         | None = None,
         sort_order: Literal["ASC", "DESC"] = "ASC",
-        status: list[Literal["Active", "Pending", "Disabled"]] | Literal["All"] = [
-            "Active",
-            "Pending",
-        ],
+        status: list[Literal["Active", "Pending", "Disabled"]]
+        | Literal["All"]
+        | None = None,
     ) -> dict:
         """Return a paginated list of sites for the account (sync).
 
@@ -733,8 +734,11 @@ class MonitoringClient(BaseMonitoringClient):
                 search in: Name, Notes, Email, Country, State, City, Zip, Full address
             sort_property: Property to sort by
             sort_order: Sort order ("ASC" or "DESC")
-            status: Site status filter ("Active,Pending" by default)
+            status: Site status filter (["Active", "Pending"] by default)
         """
+        if status is None:
+            status = ["Active", "Pending"]
+
         path = "sites/list"
         params = {
             "size": size,
@@ -963,7 +967,7 @@ class MonitoringClient(BaseMonitoringClient):
         name: str | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        hash: int | None = None,
+        hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
     ) -> bytes:
         """Return the site image (async)."""
         if name is None:

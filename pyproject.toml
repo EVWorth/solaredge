@@ -58,15 +58,21 @@ ignore = [
     "D212",    #multi-line-summary-first-line
 ]
 select = [
+    "A",   # flake8-builtins
+    "B",   # flake8-bugbear
     "I",   # isort
-    "F",   # plake8-bugbear
-    "E",   # pycoyflakes
-    "W",
+    "F",   # pyflakes
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
     "D",   # pydocstyle
     "PL",  # pylint
     "RUF", # ruff
     "UP",  # pyupgrade
 ]
+[tool.ruff.lint.per-file-ignores]
+# Sphinx requires these exact variable names in its config module.
+"docs/conf.py" = ["A001"]
+
 [tool.ruff.lint.pylint]
 max-args = 10
 
