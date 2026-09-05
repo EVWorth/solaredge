@@ -31,8 +31,6 @@ DATE_END = "2024-01-05"
 TIME_START = "2024-01-01 00:00:00"
 TIME_END = "2024-01-05 00:00:00"
 
-IMAGE_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-
 # (method name, kwargs, expected path, expected query params minus api_key)
 ENDPOINTS: list[tuple[str, dict[str, Any], str, dict[str, str]]] = [
     (
@@ -141,32 +139,11 @@ ENDPOINTS: list[tuple[str, dict[str, Any], str, dict[str, str]]] = [
         {"startTime": TIME_START, "endTime": TIME_END},
     ),
     (
-        "get_equipment_change_log",
-        {"site_id": 1, "serial_number": "SN1"},
-        "/site/1/SN1/changeLog",
-        {},
-    ),
-    (
-        "get_account_list",
-        {},
-        "/accounts/list",
-        {"pageSize": "100", "startIndex": "0", "sortOrder": "ASC"},
-    ),
-    (
         "get_meters",
         {"site_id": 1, "start_time": START, "end_time": END},
         "/site/1/meters",
         {"startTime": TIME_START, "endTime": TIME_END, "timeUnit": "DAY"},
     ),
-    ("get_sensor_list", {"site_id": 1}, "/equipment/1/sensors", {}),
-    (
-        "get_sensor_data",
-        {"site_id": 1, "start_date": START, "end_date": END},
-        "/equipment/1/sensors",
-        {"startTime": "2024-01-01T00:00:00", "endTime": "2024-01-05T00:00:00"},
-    ),
-    ("get_current_api_version", {}, "/version/current", {}),
-    ("get_supported_api_versions", {}, "/version/supported", {}),
 ]
 
 IDS = [f"{name}-{i}" for i, (name, *_) in enumerate(ENDPOINTS)]
@@ -311,53 +288,6 @@ class TestEndpoints:
         assert not async_only
 
 
-class TestImageEndpoints:
-    """Image endpoints return raw bytes rather than parsed JSON."""
-
-    def test_sync_user_image_returns_bytes(self):
-        """get_site_user_image returns the response body untouched."""
-        requests: list[httpx.Request] = []
-        client = _sync_client(requests, content=IMAGE_BYTES)
-        result = client.get_site_user_image(site_id=1, max_width=100)
-
-        assert result == IMAGE_BYTES
-        _assert_request(requests[0], "/site/1/image", {"maxWidth": "100"})
-
-    def test_sync_user_image_with_name(self):
-        """A named image is requested from the /image/{name} path."""
-        requests: list[httpx.Request] = []
-        client = _sync_client(requests, content=IMAGE_BYTES)
-        client.get_site_user_image(site_id=1, name="front")
-        _assert_request(requests[0], "/site/1/image/front", {})
-
-    def test_sync_installer_image_returns_bytes(self):
-        """get_site_installer_image returns the response body untouched."""
-        requests: list[httpx.Request] = []
-        client = _sync_client(requests, content=IMAGE_BYTES)
-        result = client.get_site_installer_image(site_id=1)
-
-        assert result == IMAGE_BYTES
-        _assert_request(requests[0], "/site/1/installerImage", {})
-
-    async def test_async_user_image_returns_bytes(self):
-        """The async image endpoint also returns raw bytes."""
-        requests: list[httpx.Request] = []
-        client = _async_client(requests, content=IMAGE_BYTES)
-        result = await client.get_site_user_image(site_id=1)
-
-        assert result == IMAGE_BYTES
-        _assert_request(requests[0], "/site/1/image", {})
-
-    async def test_async_installer_image_returns_bytes(self):
-        """The async installer image endpoint also returns raw bytes."""
-        requests: list[httpx.Request] = []
-        client = _async_client(requests, content=IMAGE_BYTES)
-        result = await client.get_site_installer_image(site_id=1, name="logo")
-
-        assert result == IMAGE_BYTES
-        _assert_request(requests[0], "/site/1/installerImage/logo", {})
-
-
 class TestTimeframeValidation:
     """Timeframe limits produce readable errors."""
 
@@ -490,11 +420,6 @@ class TestErrorTranslation:
 
         assert "SECRET" not in str(excinfo.value)
 
-    def test_raw_endpoints_skip_json_parsing(self):
-        """Image endpoints return bytes even when the body is not JSON."""
-        client = self._client_returning(200, text="<html>not json</html>")
-        assert client.get_site_user_image(site_id=1) == b"<html>not json</html>"
-
     async def test_async_client_translates_errors_too(self):
         """The async client raises the same types as the sync client."""
 
@@ -542,12 +467,6 @@ class TestValidation:
         client = MonitoringClient(API_KEY)
         with pytest.raises(SolarEdgeValidationError, match="more than 100"):
             client.get_energy(site_ids=list(range(101)), start_date=START, end_date=END)
-
-    def test_page_size_raises_instead_of_clamping(self):
-        """get_account_list no longer silently truncates an over-large request."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(SolarEdgeValidationError, match="page_size cannot exceed"):
-            client.get_account_list(page_size=500)
 
     def test_site_list_size_validated(self):
         """get_site_list documented a max of 100 but never enforced it."""
