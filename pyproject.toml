@@ -30,8 +30,11 @@ dependencies = [
 
 [dependency-groups]
 dev = ["commitizen", "pre-commit"]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-asyncio", "pytest-cov"]
 validate = ["ruff"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.uv]
 required-version = ">=0.8.0"
