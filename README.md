@@ -168,7 +168,7 @@ for more information see [page 8](https://www.solaredge.com/sites/default/files/
 ```bash
 # Install development dependencies
 uv sync
-uv run pre-commit install -t commit-msg
+uv run prek install -t commit-msg
 ```
 
 ```bash

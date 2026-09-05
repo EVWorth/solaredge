@@ -29,7 +29,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["commitizen", "pre-commit"]
+dev = [
+    "commitizen",
+    "prek",
+]
 test = ["pytest", "pytest-asyncio", "pytest-cov"]
 validate = ["ruff"]
 
