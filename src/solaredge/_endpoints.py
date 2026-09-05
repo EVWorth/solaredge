@@ -9,8 +9,10 @@ endpoint and can be thin transport wrappers around it.
 from __future__ import annotations
 
 from typing import Any, Literal, NamedTuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections.abc import Iterable
+
+from .exceptions import SolarEdgeValidationError
 
 # Shared vocabulary for the API's enumerated values. Defined once here and
 # reused in both clients' public signatures.
@@ -90,32 +92,45 @@ def validate_timeframe(
     Raises:
         ValueError: If the range is inverted or exceeds the limit for the unit.
     """
-    day_delta = (end_date - start_date).days
+    delta = end_date - start_date
 
-    if day_delta < 0:
-        raise ValueError("End date must be after start date.")
+    if delta < timedelta(0):
+        raise SolarEdgeValidationError("End date must be after start date.")
 
     if time_unit == "_ONE_WEEK_MAX":
-        if day_delta > 7:
-            raise ValueError("The maximum date range is 1 week (7 days).")
+        if delta > timedelta(days=7):
+            raise SolarEdgeValidationError("The maximum date range is 1 week (7 days).")
 
     if time_unit in ("QUARTER_OF_AN_HOUR", "HOUR"):
-        if day_delta > 31:
-            raise ValueError(
+        if delta > timedelta(days=31):
+            raise SolarEdgeValidationError(
                 f"For time_unit {time_unit}, "
                 "the maximum date range is 1 month (31 days)."
             )
     if time_unit == "DAY":
-        if day_delta > 365:
-            raise ValueError(
+        if delta > timedelta(days=365):
+            raise SolarEdgeValidationError(
                 f"For time_unit {time_unit}, "
                 "the maximum date range is 1 year (365 days)."
             )
 
 
 def _site_ids(site_ids: Iterable[int]) -> str:
-    """Render a collection of site IDs as the API's comma-separated form."""
-    return ",".join(map(str, site_ids))
+    """Render site IDs as the API's comma-separated form, enforcing its limits.
+
+    Raises:
+        SolarEdgeValidationError: If the collection is empty or exceeds the
+            documented 100-site maximum.
+    """
+    ids = list(site_ids)
+    if not ids:
+        raise SolarEdgeValidationError("At least one site ID is required.")
+    if len(ids) > MAX_SITES_PER_REQUEST:
+        raise SolarEdgeValidationError(
+            f"Cannot request data for more than {MAX_SITES_PER_REQUEST} "
+            f"sites at once; got {len(ids)}."
+        )
+    return ",".join(map(str, ids))
 
 
 def site_list(
@@ -127,6 +142,10 @@ def site_list(
     status: list[SiteStatus] | Literal["All"] | None,
 ) -> Request:
     """Build the request for a paginated list of sites."""
+    if size > MAX_PAGE_SIZE:
+        raise SolarEdgeValidationError(
+            f"size cannot exceed {MAX_PAGE_SIZE}; got {size}."
+        )
     if status is None:
         status = ["Active", "Pending"]
 
@@ -150,8 +169,6 @@ def site_details(site_id: int) -> Request:
 
 def site_data(site_ids: list[int]) -> Request:
     """Build the request for the sites' energy data period."""
-    if len(site_ids) > MAX_SITES_PER_REQUEST:
-        raise ValueError("Cannot request data for more than 100 sites at once.")
     return Request("GET", f"site/{_site_ids(site_ids)}/dataPeriod")
 
 
@@ -350,11 +367,15 @@ def account_list(
     sort_order: SortOrder,
 ) -> Request:
     """Build the request for the account and its sub-accounts."""
+    if page_size > MAX_PAGE_SIZE:
+        raise SolarEdgeValidationError(
+            f"page_size cannot exceed {MAX_PAGE_SIZE}; got {page_size}."
+        )
     return Request(
         "GET",
         "accounts/list",
         {
-            "pageSize": min(page_size, MAX_PAGE_SIZE),
+            "pageSize": page_size,
             "startIndex": start_index,
             "searchText": search_text,
             "sortProperty": sort_property,

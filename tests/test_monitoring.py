@@ -6,7 +6,17 @@ from datetime import datetime
 import httpx
 import pytest
 
-from solaredge import MonitoringClient, AsyncMonitoringClient
+from solaredge import (
+    MonitoringClient,
+    SolarEdgeAPIError,
+    SolarEdgeAuthError,
+    SolarEdgeServerError,
+    AsyncMonitoringClient,
+    SolarEdgeNotFoundError,
+    SolarEdgeResponseError,
+    SolarEdgeRateLimitError,
+    SolarEdgeValidationError,
+)
 
 API_KEY = "test_key"
 BASE = "https://monitoringapi.solaredge.com"
@@ -227,12 +237,12 @@ class TestClientLifecycle:
         assert not external.is_closed
         external.close()
 
-    def test_close_refuses_external_client(self):
-        """close() refuses to close a client it does not own."""
+    def test_close_leaves_external_client_open(self):
+        """close() is a no-op for a client it does not own, matching __exit__."""
         external = httpx.Client()
         client = MonitoringClient(api_key=API_KEY, client=external)
-        with pytest.raises(ValueError, match="externally provided"):
-            client.close()
+        client.close()
+        assert not external.is_closed
         external.close()
 
     def test_base_url_override_and_trailing_slash(self):
@@ -254,12 +264,12 @@ class TestClientLifecycle:
             assert client is not None
         assert client.client.is_closed
 
-    async def test_aclose_refuses_external_client(self):
-        """aclose() refuses to close a client it does not own."""
+    async def test_aclose_leaves_external_client_open(self):
+        """aclose() is a no-op for a client it does not own, matching __aexit__."""
         external = httpx.AsyncClient()
         client = AsyncMonitoringClient(api_key=API_KEY, client=external)
-        with pytest.raises(ValueError, match="externally provided"):
-            await client.aclose()
+        await client.aclose()
+        assert not external.is_closed
         await external.aclose()
 
 
@@ -411,3 +421,160 @@ class TestSiteLimits:
         client = MonitoringClient(API_KEY)
         with pytest.raises(ValueError, match="more than 100 sites"):
             client.get_site_data(site_ids=list(range(101)))
+
+
+class TestErrorTranslation:
+    """API failures surface as library-owned exceptions, never httpx ones."""
+
+    @staticmethod
+    def _client_returning(status: int, body=None, text: str | None = None):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if text is not None:
+                return httpx.Response(status, text=text)
+            return httpx.Response(status, json=body if body is not None else {})
+
+        return MonitoringClient(
+            "SECRET", client=httpx.Client(transport=httpx.MockTransport(handler))
+        )
+
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            (400, SolarEdgeAPIError),
+            (401, SolarEdgeAuthError),
+            (403, SolarEdgeAuthError),
+            (404, SolarEdgeNotFoundError),
+            (429, SolarEdgeRateLimitError),
+            (500, SolarEdgeServerError),
+            (503, SolarEdgeServerError),
+        ],
+    )
+    def test_status_maps_to_exception_type(self, status, expected):
+        """Each error status raises its most specific exception class."""
+        client = self._client_returning(status, {"String": "nope"})
+        with pytest.raises(expected) as excinfo:
+            client.get_site_details(site_id=1)
+
+        assert excinfo.value.status_code == status
+        assert excinfo.value.response_body == {"String": "nope"}
+
+    def test_every_api_error_is_a_solaredge_error(self):
+        """Callers can catch the base class alone."""
+        client = self._client_returning(500)
+        with pytest.raises(SolarEdgeAPIError):
+            client.get_site_details(site_id=1)
+
+    def test_api_key_is_redacted_from_the_message(self):
+        """A traceback must never expose a live API key."""
+        client = self._client_returning(403, {"String": "Invalid token"})
+        with pytest.raises(SolarEdgeAuthError) as excinfo:
+            client.get_site_details(site_id=1)
+
+        assert "SECRET" not in str(excinfo.value)
+        assert "SECRET" not in (excinfo.value.url or "")
+        assert "api_key=REDACTED" in str(excinfo.value)
+
+    def test_httpx_error_is_preserved_as_cause(self):
+        """The transport-level error stays reachable for callers who want it."""
+        client = self._client_returning(404)
+        with pytest.raises(SolarEdgeNotFoundError) as excinfo:
+            client.get_site_details(site_id=1)
+
+        assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
+
+    def test_non_json_success_body_raises_response_error(self):
+        """A 200 with an unparseable body is a library error, not a ValueError."""
+        client = self._client_returning(200, text="<html>not json</html>")
+        with pytest.raises(SolarEdgeResponseError) as excinfo:
+            client.get_site_details(site_id=1)
+
+        assert "SECRET" not in str(excinfo.value)
+
+    def test_raw_endpoints_skip_json_parsing(self):
+        """Image endpoints return bytes even when the body is not JSON."""
+        client = self._client_returning(200, text="<html>not json</html>")
+        assert client.get_site_user_image(site_id=1) == b"<html>not json</html>"
+
+    async def test_async_client_translates_errors_too(self):
+        """The async client raises the same types as the sync client."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, json={"String": "slow down"})
+
+        client = AsyncMonitoringClient(
+            "SECRET",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        with pytest.raises(SolarEdgeRateLimitError) as excinfo:
+            await client.get_site_details(site_id=1)
+        assert excinfo.value.status_code == 429
+
+
+class TestValidation:
+    """Argument limits are enforced locally and consistently."""
+
+    def test_validation_error_is_still_a_value_error(self):
+        """Existing `except ValueError` handlers keep working."""
+        assert issubclass(SolarEdgeValidationError, ValueError)
+
+    @pytest.mark.parametrize(
+        "method",
+        ["get_site_data", "get_overview"],
+    )
+    def test_empty_site_ids_rejected(self, method):
+        """An empty list would build a malformed `site//...` path."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="At least one site ID"):
+            getattr(client, method)(site_ids=[])
+
+    @pytest.mark.parametrize(
+        "method",
+        ["get_site_data", "get_overview"],
+    )
+    def test_site_cap_enforced_consistently(self, method):
+        """Every site_ids endpoint enforces the cap, not just get_site_data."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="more than 100"):
+            getattr(client, method)(site_ids=list(range(101)))
+
+    def test_energy_enforces_site_cap(self):
+        """The cap applies to the dated endpoints as well."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="more than 100"):
+            client.get_energy(site_ids=list(range(101)), start_date=START, end_date=END)
+
+    def test_page_size_raises_instead_of_clamping(self):
+        """get_account_list no longer silently truncates an over-large request."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="page_size cannot exceed"):
+            client.get_account_list(page_size=500)
+
+    def test_site_list_size_validated(self):
+        """get_site_list documented a max of 100 but never enforced it."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="size cannot exceed"):
+            client.get_site_list(size=500)
+
+    def test_partial_day_over_limit_is_rejected(self):
+        """A 7.5-day range exceeds the one-week ceiling.
+
+        The previous whole-day truncation let this through.
+        """
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="1 week"):
+            client.get_storage_data(
+                site_id=1,
+                start_time=datetime(2024, 1, 1),
+                end_time=datetime(2024, 1, 8, 12),
+            )
+
+    def test_exactly_at_limit_is_allowed(self):
+        """The boundary itself stays valid."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        client.get_storage_data(
+            site_id=1,
+            start_time=datetime(2024, 1, 1),
+            end_time=datetime(2024, 1, 8),
+        )
+        assert len(requests) == 1
