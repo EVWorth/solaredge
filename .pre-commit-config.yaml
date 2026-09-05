@@ -1,5 +1,9 @@
-# To update pre-commit hooks run:
-# uv run pre-commit autoupdate --freeze
+# Hooks are run by prek (https://github.com/j178/prek), a drop-in
+# pre-commit replacement. This file keeps the .pre-commit-config.yaml
+# name and format, so Dependabot's pre-commit ecosystem still updates it.
+#
+# To update hook revisions run:
+# uv run prek update --freeze
 
 repos:
 -   hooks:
