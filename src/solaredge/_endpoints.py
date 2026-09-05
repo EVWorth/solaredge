@@ -40,17 +40,6 @@ SiteSortProperty = Literal[
     "InstallationDate",
     "Amount",
     "MaxSeverity",
-    "CreationTime",
-]
-AccountSortProperty = Literal[
-    "Name",
-    "country",
-    "city",
-    "address",
-    "zip",
-    "fax",
-    "phone",
-    "notes",
 ]
 
 # `_ONE_WEEK_MAX` is not an API time unit; it selects the one-week ceiling for
@@ -70,7 +59,6 @@ MAX_PAGE_SIZE = 100
 
 _DATE_FORMAT = "%Y-%m-%d"
 _DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-_ISO_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
 class Request(NamedTuple):
@@ -79,7 +67,6 @@ class Request(NamedTuple):
     method: str
     path: str
     params: dict[str, Any] | None = None
-    raw: bool = False
 
 
 def validate_timeframe(
@@ -286,27 +273,6 @@ def storage_data(
     return Request("GET", f"site/{site_id}/storageData", params)
 
 
-def site_user_image(
-    site_id: int,
-    name: str | None,
-    max_width: int | None,
-    max_height: int | None,
-    image_hash: int | None,
-) -> Request:
-    """Build the request for the site image, which returns raw bytes."""
-    path = f"site/{site_id}/image" if name is None else f"site/{site_id}/image/{name}"
-    return Request(
-        "GET",
-        path,
-        {
-            "maxWidth": max_width,
-            "maxHeight": max_height,
-            "hash": image_hash,
-        },
-        raw=True,
-    )
-
-
 def environmental_benefits(site_id: int, system_units: SystemUnits | None) -> Request:
     """Build the request for the site's environmental benefits."""
     return Request(
@@ -314,16 +280,6 @@ def environmental_benefits(site_id: int, system_units: SystemUnits | None) -> Re
         f"site/{site_id}/envBenefits",
         {"systemUnits": system_units},
     )
-
-
-def site_installer_image(site_id: int, name: str | None) -> Request:
-    """Build the request for the installer image, which returns raw bytes."""
-    path = (
-        f"site/{site_id}/installerImage"
-        if name is None
-        else f"site/{site_id}/installerImage/{name}"
-    )
-    return Request("GET", path, raw=True)
 
 
 def components_list(site_id: int) -> Request:
@@ -354,36 +310,6 @@ def inverter_technical_data(
     )
 
 
-def equipment_change_log(site_id: int, serial_number: str) -> Request:
-    """Build the request for a component's replacement history."""
-    return Request("GET", f"site/{site_id}/{serial_number}/changeLog")
-
-
-def account_list(
-    page_size: int,
-    start_index: int,
-    search_text: str | None,
-    sort_property: AccountSortProperty | None,
-    sort_order: SortOrder,
-) -> Request:
-    """Build the request for the account and its sub-accounts."""
-    if page_size > MAX_PAGE_SIZE:
-        raise SolarEdgeValidationError(
-            f"page_size cannot exceed {MAX_PAGE_SIZE}; got {page_size}."
-        )
-    return Request(
-        "GET",
-        "accounts/list",
-        {
-            "pageSize": page_size,
-            "startIndex": start_index,
-            "searchText": search_text,
-            "sortProperty": sort_property,
-            "sortOrder": sort_order,
-        },
-    )
-
-
 def meters(
     site_id: int,
     start_time: datetime,
@@ -403,31 +329,3 @@ def meters(
             "meters": ",".join(meters) if meters else None,
         },
     )
-
-
-def sensor_list(site_id: int) -> Request:
-    """Build the request for the site's sensors."""
-    return Request("GET", f"equipment/{site_id}/sensors")
-
-
-def sensor_data(site_id: int, start_date: datetime, end_date: datetime) -> Request:
-    """Build the request for sensor measurements."""
-    validate_timeframe("_ONE_WEEK_MAX", start_date, end_date)
-    return Request(
-        "GET",
-        f"equipment/{site_id}/sensors",
-        {
-            "startTime": start_date.strftime(_ISO_FORMAT),
-            "endTime": end_date.strftime(_ISO_FORMAT),
-        },
-    )
-
-
-def current_api_version() -> Request:
-    """Build the request for the current API version."""
-    return Request("GET", "version/current")
-
-
-def supported_api_versions() -> Request:
-    """Build the request for the list of supported API versions."""
-    return Request("GET", "version/supported")

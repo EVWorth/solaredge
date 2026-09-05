@@ -21,7 +21,6 @@ from ._endpoints import (
     MeterReading,
     SiteSortProperty,
     ValidatedTimeUnit,
-    AccountSortProperty,
 )
 from .exceptions import (
     SolarEdgeResponseError,
@@ -79,8 +78,8 @@ class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interfac
         return url, {k: v for k, v in combined.items() if v is not None}
 
     @staticmethod
-    def _parse_response(response: httpx.Response, raw: bool) -> Any:
-        """Return raw bytes or parsed JSON, translating failures.
+    def _parse_response(response: httpx.Response) -> Any:
+        """Return the parsed JSON body, translating failures.
 
         Raises a SolarEdgeError subclass rather than an httpx exception, so
         callers never need to depend on this library's transport. The original
@@ -91,8 +90,6 @@ class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interfac
         except httpx.HTTPStatusError as exc:
             raise error_from_response(response) from exc
 
-        if raw:
-            return response.content
         try:
             return response.json()
         except ValueError as exc:
@@ -166,7 +163,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
                 url=url,
                 params=params,
             )
-            return self._parse_response(response, request.raw)
+            return self._parse_response(response)
 
     async def get_site_list(
         self,
@@ -183,7 +180,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             size: Number of sites to return per page (max 100)
             start_index: Starting index for pagination
             search_text: Text to search for across multiple fields. The API will
-                search in: Name, Notes, Email, Country, State, City, Zip, Full address
+                search in: Name, Notes, Email, Country, State, City, Zip
             sort_property: Property to sort by
             sort_order: Sort order ("ASC" or "DESC")
             status: Site status filter (["Active", "Pending"] by default)
@@ -289,27 +286,6 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             _endpoints.storage_data(site_id, start_time, end_time, serials)
         )
 
-    async def get_site_user_image(
-        self,
-        site_id: int,
-        name: str | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        image_hash: int | None = None,
-    ) -> bytes:
-        """Return the site image (async).
-
-        Args:
-            site_id: The site to fetch the image for.
-            name: Optional image name; the default image is returned without it.
-            max_width: Optional maximum width in pixels.
-            max_height: Optional maximum height in pixels.
-            image_hash: Optional cache-validation hash (the API's `hash` param).
-        """
-        return await self._send(
-            _endpoints.site_user_image(site_id, name, max_width, max_height, image_hash)
-        )
-
     async def get_environmental_benefits(
         self,
         site_id: int,
@@ -319,14 +295,6 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         return await self._send(
             _endpoints.environmental_benefits(site_id, system_units)
         )
-
-    async def get_site_installer_image(
-        self,
-        site_id: int,
-        name: str | None = None,
-    ) -> bytes:
-        """Return the site installer image (async)."""
-        return await self._send(_endpoints.site_installer_image(site_id, name))
 
     async def get_components_list(self, site_id: int) -> dict:
         """Return a list of inverters/SMIs in the specific site. (async)."""
@@ -353,32 +321,6 @@ class AsyncMonitoringClient(BaseMonitoringClient):
             )
         )
 
-    async def get_equipment_change_log(
-        self,
-        site_id: int,
-        serial_number: str,
-    ) -> dict:
-        """Returns a list of equipment component replacements ordered by date (async).
-
-        This method is applicable to inverters, optimizers, batteries and gateways.
-        """
-        return await self._send(_endpoints.equipment_change_log(site_id, serial_number))
-
-    async def get_account_list(
-        self,
-        page_size: int = 100,
-        start_index: int = 0,
-        search_text: str | None = None,
-        sort_property: AccountSortProperty | None = None,
-        sort_order: SortOrder = "ASC",
-    ) -> dict:
-        """Return the account and list of sub-accounts (async)."""
-        return await self._send(
-            _endpoints.account_list(
-                page_size, start_index, search_text, sort_property, sort_order
-            )
-        )
-
     async def get_meters(
         self,
         site_id: int,
@@ -395,27 +337,6 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         return await self._send(
             _endpoints.meters(site_id, start_time, end_time, time_unit, meters)
         )
-
-    async def get_sensor_list(self, site_id: int) -> dict:
-        """Returns a list of all the sensors in the site, and the device to which they are connected.  (async)."""  # noqa: E501
-        return await self._send(_endpoints.sensor_list(site_id))
-
-    async def get_sensor_data(
-        self,
-        site_id: int,
-        start_date: datetime,
-        end_date: datetime,
-    ) -> dict:
-        """Returns the data of all the sensors in the site, by the gateway they are connected to. (async)."""  # noqa: E501
-        return await self._send(_endpoints.sensor_data(site_id, start_date, end_date))
-
-    async def get_current_api_version(self) -> dict:
-        """Returns the current API version. (async)."""
-        return await self._send(_endpoints.current_api_version())
-
-    async def get_supported_api_versions(self) -> dict:
-        """Returns a list of supported API versions. (async)."""
-        return await self._send(_endpoints.supported_api_versions())
 
 
 class MonitoringClient(BaseMonitoringClient):
@@ -476,7 +397,7 @@ class MonitoringClient(BaseMonitoringClient):
             url=url,
             params=params,
         )
-        return self._parse_response(response, request.raw)
+        return self._parse_response(response)
 
     def get_site_list(
         self,
@@ -493,7 +414,7 @@ class MonitoringClient(BaseMonitoringClient):
             size: Number of sites to return per page (max 100)
             start_index: Starting index for pagination
             search_text: Text to search for across multiple fields. The API will
-                search in: Name, Notes, Email, Country, State, City, Zip, Full address
+                search in: Name, Notes, Email, Country, State, City, Zip
             sort_property: Property to sort by
             sort_order: Sort order ("ASC" or "DESC")
             status: Site status filter (["Active", "Pending"] by default)
@@ -600,27 +521,6 @@ class MonitoringClient(BaseMonitoringClient):
             _endpoints.storage_data(site_id, start_time, end_time, serials)
         )
 
-    def get_site_user_image(
-        self,
-        site_id: int,
-        name: str | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
-        image_hash: int | None = None,
-    ) -> bytes:
-        """Return the site image (sync).
-
-        Args:
-            site_id: The site to fetch the image for.
-            name: Optional image name; the default image is returned without it.
-            max_width: Optional maximum width in pixels.
-            max_height: Optional maximum height in pixels.
-            image_hash: Optional cache-validation hash (the API's `hash` param).
-        """
-        return self._send(
-            _endpoints.site_user_image(site_id, name, max_width, max_height, image_hash)
-        )
-
     def get_environmental_benefits(
         self,
         site_id: int,
@@ -628,14 +528,6 @@ class MonitoringClient(BaseMonitoringClient):
     ) -> dict:
         """Return the environmental benefits (sync)."""
         return self._send(_endpoints.environmental_benefits(site_id, system_units))
-
-    def get_site_installer_image(
-        self,
-        site_id: int,
-        name: str | None = None,
-    ) -> bytes:
-        """Return the site installer image (sync)."""
-        return self._send(_endpoints.site_installer_image(site_id, name))
 
     def get_components_list(self, site_id: int) -> dict:
         """Return a list of inverters/SMIs in the specific site. (sync)."""
@@ -662,32 +554,6 @@ class MonitoringClient(BaseMonitoringClient):
             )
         )
 
-    def get_equipment_change_log(
-        self,
-        site_id: int,
-        serial_number: str,
-    ) -> dict:
-        """Returns a list of equipment component replacements ordered by date (sync).
-
-        This method is applicable to inverters, optimizers, batteries and gateways.
-        """
-        return self._send(_endpoints.equipment_change_log(site_id, serial_number))
-
-    def get_account_list(
-        self,
-        page_size: int = 100,
-        start_index: int = 0,
-        search_text: str | None = None,
-        sort_property: AccountSortProperty | None = None,
-        sort_order: SortOrder = "ASC",
-    ) -> dict:
-        """Return the account and list of sub-accounts (sync)."""
-        return self._send(
-            _endpoints.account_list(
-                page_size, start_index, search_text, sort_property, sort_order
-            )
-        )
-
     def get_meters(
         self,
         site_id: int,
@@ -704,24 +570,3 @@ class MonitoringClient(BaseMonitoringClient):
         return self._send(
             _endpoints.meters(site_id, start_time, end_time, time_unit, meters)
         )
-
-    def get_sensor_list(self, site_id: int) -> dict:
-        """Returns a list of all the sensors in the site, and the device to which they are connected.  (sync)."""  # noqa: E501
-        return self._send(_endpoints.sensor_list(site_id))
-
-    def get_sensor_data(
-        self,
-        site_id: int,
-        start_date: datetime,
-        end_date: datetime,
-    ) -> dict:
-        """Returns the data of all the sensors in the site, by the gateway they are connected to. (sync)."""  # noqa: E501
-        return self._send(_endpoints.sensor_data(site_id, start_date, end_date))
-
-    def get_current_api_version(self) -> dict:
-        """Returns the current API version. (sync)."""
-        return self._send(_endpoints.current_api_version())
-
-    def get_supported_api_versions(self) -> dict:
-        """Returns a list of supported API versions. (sync)."""
-        return self._send(_endpoints.supported_api_versions())
