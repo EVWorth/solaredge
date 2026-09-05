@@ -30,8 +30,11 @@ dependencies = [
 
 [dependency-groups]
 dev = ["commitizen", "pre-commit"]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-asyncio", "pytest-cov"]
 validate = ["ruff"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.uv]
 required-version = ">=0.8.0"
@@ -55,15 +58,21 @@ ignore = [
     "D212",    #multi-line-summary-first-line
 ]
 select = [
+    "A",   # flake8-builtins
+    "B",   # flake8-bugbear
     "I",   # isort
-    "F",   # plake8-bugbear
-    "E",   # pycoyflakes
-    "W",
+    "F",   # pyflakes
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
     "D",   # pydocstyle
     "PL",  # pylint
     "RUF", # ruff
     "UP",  # pyupgrade
 ]
+[tool.ruff.lint.per-file-ignores]
+# Sphinx requires these exact variable names in its config module.
+"docs/conf.py" = ["A001"]
+
 [tool.ruff.lint.pylint]
 max-args = 10
 

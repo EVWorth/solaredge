@@ -14,7 +14,7 @@ DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com"
 MAX_CONCURRENT_REQUESTS = 3
 
 
-class BaseMonitoringClient(ABC):
+class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interface
     """Shared helpers for monitoring clients.
 
     Contains URL building, default params and simple timeout parsing. Concrete
@@ -61,23 +61,19 @@ class BaseMonitoringClient(ABC):
 
         if time_unit == "_ONE_WEEK_MAX":
             if day_delta > 7:
-                raise ValueError(("The maximum date range is 1 week (7 days).",))
+                raise ValueError("The maximum date range is 1 week (7 days).")
 
         if time_unit in ("QUARTER_OF_AN_HOUR", "HOUR"):
             if day_delta > 31:
                 raise ValueError(
-                    (
-                        f"For time_unit {time_unit}, ",
-                        "the maximum date range is 1 month (31 days).",
-                    )
+                    f"For time_unit {time_unit}, "
+                    "the maximum date range is 1 month (31 days)."
                 )
         if time_unit == "DAY":
             if day_delta > 365:
                 raise ValueError(
-                    (
-                        f"For time_unit {time_unit}, ",
-                        "the maximum date range is 1 year (365 days).",
-                    )
+                    f"For time_unit {time_unit}, "
+                    "the maximum date range is 1 year (365 days)."
                 )
 
 
@@ -137,17 +133,23 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         method: str,
         path: str,
         params: dict | None = None,
+        raw: bool = False,
     ) -> Any:
+        """Perform a request and return parsed JSON, or raw bytes if `raw`.
+
+        Params whose value is None are dropped: httpx encodes them as empty
+        query values rather than omitting them.
+        """
         async with self._semaphore:  # Acquire semaphore before making request
             url = self._build_url(path)
             combined = {**self._default_params(), **(params or {})}
             response = await self.client.request(
                 method=method,
                 url=url,
-                params=combined,
+                params={k: v for k, v in combined.items() if v is not None},
             )
             response.raise_for_status()
-            return response.json()
+            return response.content if raw else response.json()
 
     async def get_site_list(
         self,
@@ -170,10 +172,9 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         ]
         | None = None,
         sort_order: Literal["ASC", "DESC"] = "ASC",
-        status: list[Literal["Active", "Pending", "Disabled"]] | Literal["All"] = [
-            "Active",
-            "Pending",
-        ],
+        status: list[Literal["Active", "Pending", "Disabled"]]
+        | Literal["All"]
+        | None = None,
     ) -> dict:
         """Return a paginated list of sites for the account (async).
 
@@ -184,8 +185,11 @@ class AsyncMonitoringClient(BaseMonitoringClient):
                 search in: Name, Notes, Email, Country, State, City, Zip, Full address
             sort_property: Property to sort by
             sort_order: Sort order ("ASC" or "DESC")
-            status: Site status filter ("Active,Pending" by default)
+            status: Site status filter (["Active", "Pending"] by default)
         """
+        if status is None:
+            status = ["Active", "Pending"]
+
         path = "sites/list"
         params = {
             "size": size,
@@ -411,7 +415,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         name: str | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        hash: int | None = None,
+        hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
     ) -> bytes:
         """Return the site image (async)."""
         if name is None:
@@ -421,6 +425,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         return await self._make_request(
             method="GET",
             path=path,
+            raw=True,
             params={
                 "maxWidth": max_width,
                 "maxHeight": max_height,
@@ -456,6 +461,7 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         return await self._make_request(
             method="GET",
             path=path,
+            raw=True,
         )
 
     async def get_components_list(self, site_id: int) -> dict:
@@ -668,10 +674,18 @@ class MonitoringClient(BaseMonitoringClient):
             raise ValueError("Will not close externally provided httpx.Client.")
         self.client.close()
 
-    def _make_request(self, method: str, path: str, params: dict | None = None) -> Any:
-        """Perform a synchronous HTTP request and return parsed JSON.
+    def _make_request(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        raw: bool = False,
+    ) -> Any:
+        """Perform a synchronous request, returning parsed JSON or raw bytes.
 
-        This mirrors the async `_request` helper but uses a blocking httpx.Client.
+        This mirrors the async `_make_request` helper but uses a blocking
+        httpx.Client. Params whose value is None are dropped: httpx encodes
+        them as empty query values rather than omitting them.
         """
         url = self._build_url(path)
         combined = {
@@ -681,10 +695,10 @@ class MonitoringClient(BaseMonitoringClient):
         response = self.client.request(
             method=method,
             url=url,
-            params=combined,
+            params={k: v for k, v in combined.items() if v is not None},
         )
         response.raise_for_status()
-        return response.json()
+        return response.content if raw else response.json()
 
     def get_site_list(
         self,
@@ -707,10 +721,9 @@ class MonitoringClient(BaseMonitoringClient):
         ]
         | None = None,
         sort_order: Literal["ASC", "DESC"] = "ASC",
-        status: list[Literal["Active", "Pending", "Disabled"]] | Literal["All"] = [
-            "Active",
-            "Pending",
-        ],
+        status: list[Literal["Active", "Pending", "Disabled"]]
+        | Literal["All"]
+        | None = None,
     ) -> dict:
         """Return a paginated list of sites for the account (sync).
 
@@ -721,8 +734,11 @@ class MonitoringClient(BaseMonitoringClient):
                 search in: Name, Notes, Email, Country, State, City, Zip, Full address
             sort_property: Property to sort by
             sort_order: Sort order ("ASC" or "DESC")
-            status: Site status filter ("Active,Pending" by default)
+            status: Site status filter (["Active", "Pending"] by default)
         """
+        if status is None:
+            status = ["Active", "Pending"]
+
         path = "sites/list"
         params = {
             "size": size,
@@ -951,7 +967,7 @@ class MonitoringClient(BaseMonitoringClient):
         name: str | None = None,
         max_width: int | None = None,
         max_height: int | None = None,
-        hash: int | None = None,
+        hash: int | None = None,  # noqa: A002 - mirrors the API's parameter name
     ) -> bytes:
         """Return the site image (async)."""
         if name is None:
@@ -961,6 +977,7 @@ class MonitoringClient(BaseMonitoringClient):
         return self._make_request(
             method="GET",
             path=path,
+            raw=True,
             params={
                 "maxWidth": max_width,
                 "maxHeight": max_height,
@@ -996,6 +1013,7 @@ class MonitoringClient(BaseMonitoringClient):
         return self._make_request(
             method="GET",
             path=path,
+            raw=True,
         )
 
     def get_components_list(self, site_id: int) -> dict:
