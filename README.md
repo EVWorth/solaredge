@@ -76,10 +76,10 @@ client.close()
 with MonitoringClient("YOUR_API_KEY") as client:
     site_details = []
     sites = client.get_site_list()
-    for site in sites['sites']['list']:
+    for site in sites["sites"]["list"]:
         site_details.append(
             client.get_site_details(
-                site_id=site['id'],
+                site_id=site["id"],
             )
         )
 ```
@@ -90,17 +90,19 @@ with MonitoringClient("YOUR_API_KEY") as client:
 import asyncio
 from solaredge import AsyncMonitoringClient
 
+
 async def main():
     async with AsyncMonitoringClient(api_key="YOUR_API_KEY") as client:
         sites = await client.get_site_list()
-        
+
         # Concurrent requests (respecting 3 concurrent limit)
         tasks = []
-        for site in sites['sites']['list']:  
-            task = client.get_site_details(site_id=site['id'])
+        for site in sites["sites"]["list"]:
+            task = client.get_site_details(site_id=site["id"])
             tasks.append(task)
-        
+
         site_details = await asyncio.gather(*tasks)
+
 
 asyncio.run(main())
 ```
