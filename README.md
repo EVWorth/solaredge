@@ -1,22 +1,14 @@
 # SolarEdge Client (Monitoring API)
 
 <p align="center">
-  <a href="https://solaredge.readthedocs.io">
-    <img src="https://img.shields.io/readthedocs/solaredge?logo=read-the-docs&logoColor=fff&style=flat-square" alt="Documentation Status">
-  </a>
-  <a href="https://codecov.io/gh/EVWorth/solaredge">
-    <img src="https://img.shields.io/codecov/c/github/EVWorth/solaredge?logo=codecov&logoColor=fff&style=flat-square" alt="Test coverage percentage">
-  </a>
-</p>
-<p align="center">
   <a href="https://docs.astral.sh/uv/">
     <img src="https://img.shields.io/badge/packaging-UV-299bd7?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDEiIGhlaWdodD0iNDEiIHZpZXdCb3g9IjAgMCA0MSA0MSIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTS01LjI4NjE5ZS0wNiAwLjE2ODYyOUwwLjA4NDMwOTggMjAuMTY4NUwwLjE1MTc2MiAzNi4xNjgzQzAuMTYxMDc1IDM4LjM3NzQgMS45NTk0NyA0MC4xNjA3IDQuMTY4NTkgNDAuMTUxNEwyMC4xNjg0IDQwLjA4NEwzMC4xNjg0IDQwLjA0MThMMzEuMTg1MiA0MC4wMzc1QzMzLjM4NzcgNDAuMDI4MiAzNS4xNjgzIDM4LjIwMjYgMzUuMTY4MyAzNlYzNkwzNy4wMDAzIDM2TDM3LjAwMDMgMzkuOTk5Mkw0MC4xNjgzIDM5Ljk5OTZMMzkuOTk5NiAtOS45NDY1M2UtMDdMMjEuNTk5OCAwLjA3NzU2ODlMMjEuNjc3NCAxNi4wMTg1TDIxLjY3NzQgMjUuOTk5OEwyMC4wNzc0IDI1Ljk5OThMMTguMzk5OCAyNS45OTk4TDE4LjQ3NzQgMTYuMDMyTDE4LjM5OTggMC4wOTEwNTkzTC01LjI4NjE5ZS0wNiAwLjE2ODYyOVoiIGZpbGw9IiNERTVGRTkiLz4KPC9zdmc+Cg==" alt="UV">
   </a>
   <a href="https://docs.astral.sh/ruff/">
     <img src="https://img.shields.io/badge/code%20style-Ruff-8400ff?style=flat-square" alt="Ruff">
   </a>
-  <a href="https://github.com/pre-commit/pre-commit">
-    <img src="https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white&style=flat-square" alt="pre-commit">
+  <a href="https://github.com/j178/prek">
+    <img src="https://img.shields.io/badge/hooks-prek-f6d55c?style=flat-square" alt="prek">
   </a>
 </p>
 <p align="center">
@@ -40,6 +32,7 @@ See https://www.solaredge.com/sites/default/files/se_monitoring_api.pdf
 - [Quick Start](#quick-start)
   - [Synchronous Usage](#synchronous-usage)
   - [Asynchronous Usage](#asynchronous-usage)
+  - [Error Handling](#error-handling)
 - [Rate Limiting & Best Practices](#rate-limiting--best-practices)
 - [Development](#development)
 - [API Documentation](#api-documentation)
@@ -47,7 +40,7 @@ See https://www.solaredge.com/sites/default/files/se_monitoring_api.pdf
 ## Features
 
 - **Sync & Async Support**: Choose between `MonitoringClient` (sync) and `AsyncMonitoringClient` (async)
-- **Full API Coverage**: All monitoring endpoints supported
+- **Current API Coverage**: Every monitoring endpoint SolarEdge still serves
 - **Type Hints**: Complete type annotations for better IDE support
 - **Rate Limiting**: Built-in awareness of API limits (3 concurrent requests)
 - **Context Manager Support**: Automatic resource cleanup
