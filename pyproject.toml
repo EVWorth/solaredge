@@ -72,10 +72,6 @@ select = [
     "RUF", # ruff
     "UP",  # pyupgrade
 ]
-[tool.ruff.lint.per-file-ignores]
-# Sphinx requires these exact variable names in its config module.
-"docs/conf.py" = ["A001"]
-
 [tool.ruff.lint.pylint]
 max-args = 10
 
