@@ -1,158 +1,100 @@
-# SolarEdge Monitoring API — reference
+# SolarEdge Monitoring API V2: notes for this library
 
-This document collects the monitoring API endpoints referenced in the repository and the high-level rules from the
-SolarEdge Monitoring API specification. Use this as a developer reference when implementing client methods.
+SolarEdge retired Monitoring API V1 on November 3, 2026. This file records
+what the client relies on about V2 and how sure we are of each piece.
+
+SolarEdge's official reference is at <https://api-docs.solaredge.com/>. It is
+rendered by JavaScript, so it could not be read automatically while this client
+was written. Everything below comes from that documentation as quoted by other
+projects, and from their working V2 code:
+[aiosolaredge](https://github.com/Solarlibs/aiosolaredge/pull/151),
+[Home Assistant](https://github.com/home-assistant/core/pull/187939),
+[ioBroker](https://github.com/iobroker-community-adapters/ioBroker.solaredge/pull/307)
+and [Domoticz](https://github.com/domoticz/domoticz/pull/7028).
+
+**Nothing here has been checked against a live site by this project yet.** If
+you have V2 credentials and find a difference, please open an issue.
 
 ## Base URL
 
 ```
-https://monitoringapi.solaredge.com
+https://monitoringapi.solaredge.com/v2
 ```
 
 ## Authentication
 
-- Every request requires the `api_key` parameter. Example: `?api_key=YOUR_KEY`
+V1 keys (the `api_key` query parameter) are not accepted by V2.
 
-## Common notes
+| Access type | Request header | Status in this library |
+| --- | --- | --- |
+| Fleet Access | `X-API-Key: <key>` | Supported |
+| Site Access (OAuth2) | `Authorization: Bearer <access token>` | Not supported; see [#122](https://github.com/EVWorth/solaredge/issues/122) |
 
-- Responses are JSON objects. Client methods should call `response.raise_for_status()` (or handle errors) and parse JSON.
-- Rate limits and concurrency are enforced by the server (see Limits section below).
-- Several endpoints support bulk requests by accepting comma-separated site IDs (up to 100 IDs).
+Site Access, for reference:
 
----
+- **Authorize:** `https://connect.solaredge.com/authorize`, with scopes
+  `SITE_DATA DEVICE_DATA`.
+- **Token:** `POST /v2/oauth2/token`, with a JSON body.
+- **Tokens:**
+  - Access tokens last about 2 hours.
+  - Refresh tokens rotate on every use.
+  - SolarEdge appends `site_id` to the redirect URL and does not echo `state`.
+
+## Parameters
+
+- **Time ranges:**
+  - Passed as `from` and `to`, in ISO 8601 with a UTC offset, e.g.
+    `2026-01-01T00:00:00+01:00`.
+  - A timestamp without an offset is rejected server-side ("Failed to convert
+    ... to required type [Instant]"). The client refuses naive datetimes
+    locally for that reason.
+  - The `+` must be URL-encoded; httpx does this.
+- **`resolution`:**
+  - Confirmed: `QUARTER_HOUR`, `MONTH`, `YEAR`.
+  - Assumed by analogy, not confirmed: `HOUR`, `DAY`, `WEEK`.
+- **`unit`:** energy `WH`/`KWH`/`MWH`; power `W`/`KW`.
+- **Units in responses:** upper case. Compare case-insensitively.
+- **`types` on `/devices`:** sent as a repeated key, e.g.
+  `?types=INVERTER&types=BATTERY`. Values seen: `INVERTER`, `METER`,
+  `BATTERY`, `GATEWAY`.
 
 ## Endpoints
 
-### 1) Site List
-- Path: `/sites/list`
-- Method: GET
-- Purpose: Returns a paginated list of sites for the account.
-- Common query params: `api_key`, `size`, `startIndex`, `searchText`, `sortProperty`, `sortOrder`, `status`
-- Example: `/sites/list?api_key=KEY&size=50&startIndex=0&status=Active`
+"Confirmed" means the path and parameters appear in at least one other
+project's working V2 code. "Reported" means it is named in other projects'
+notes, but the parameters this client sends are assumed.
 
-### 2) Site Details
-- Path: `/site/{siteId}/details`
-- Method: GET
-- Purpose: Details for a single site (location, configuration, contact info, etc.).
-- Params: `api_key`
+| Method | Path | Params | Status |
+| --- | --- | --- | --- |
+| `get_sites` | `/sites` | none (paging unknown) | Reported; Fleet Access only |
+| `get_site_details` | `/sites/{id}` | none | Confirmed |
+| `get_overview` | `/sites/{id}/overview` | optional `from`, `to` | Confirmed |
+| `get_energy` | `/sites/{id}/energy` | `from`, `to`, `resolution`, `unit` | Confirmed |
+| `get_power` | `/sites/{id}/power` | `from`, `to`, `resolution`, `unit` | Confirmed |
+| `get_lifetime_energy` | `/sites/{id}/lifetime-energy` | none | Confirmed |
+| `get_current_power_flow` | `/sites/{id}/power-flow` | none | Confirmed; 403 below Advanced Monitoring |
+| `get_devices` | `/sites/{id}/devices` | repeated `types` | Confirmed |
+| `get_storage_lifetime_energy` | `/sites/{id}/storage/lifetime-energy` | `from`, `to` | Confirmed |
+| `get_storage_telemetry` | `/sites/{id}/storage/telemetry` | `from`, `to` | Reported |
+| `get_meters_telemetry` | `/sites/{id}/meters/telemetry` | `from`, `to` | Reported |
+| `get_inverters_telemetry` | `/sites/{id}/inverters/telemetry` | `from`, `to` | Reported; about a 12-hour window per call |
+| `get` | any | any | For anything else, e.g. `/sites/{id}/alerts` |
 
-### 3) Site Data Period
-- Path: `/site/{siteId}/dataPeriod`
-- Method: GET
-- Purpose: Returns the site energy production `startDate` and `endDate`.
-- Params: `api_key`
+## V1 data with no known V2 equivalent
 
-### 4) Site Energy
-- Path: `/site/{siteId}/energy`
-- Method: GET
-- Purpose: Aggregated energy measurements for a site.
-- Params: `api_key`, `startDate`, `endDate`, `timeUnit` (e.g. DAY, WEEK, MONTH)
+- Optimizer-level telemetry: optimizers appear only in `/devices`.
+- Environmental benefits (`envBenefits`).
+- Site data period (`dataPeriod`) and time-frame energy (`timeFrameEnergy`).
+- Comma-separated bulk requests for multiple sites.
+- Some inverter fields: temperature, mode, per-phase values.
+- Some battery fields: temperature, state code.
 
-### 5) Site Energy — Time Frame
-- Path: `/site/{siteId}/timeFrameEnergy`
-- Method: GET
-- Purpose: Energy for a requested time frame (similar to `energy` but used by some clients/tools).
-- Params: `api_key`, `startDate`, `endDate`, `timeUnit`
+## Limits
 
-### 6) Site Power
-- Path: `/site/{siteId}/power`
-- Method: GET
-- Purpose: Power measurements in a 15-minute resolution for the requested timeframe.
-- Params: `api_key`, `startTime`, `endTime`
+These are the free-tier figures; paid plans differ.
 
-### 7) Site Overview
-- Path: `/site/{siteId}/overview`
-- Method: GET
-- Purpose: Current site power and summary metrics (today, month, lifetime energy, revenue where available).
-- Params: `api_key`
-
-### 8) Site Power Details
-- Path: `/site/{siteId}/powerDetails`
-- Method: GET
-- Purpose: Detailed power measurements including meters such as consumption, export, import.
-- Params: `api_key`, `startTime`, `endTime`, optional `meters` (comma separated)
-
-### 9) Site Energy Details
-- Path: `/site/{siteId}/energyDetails`
-- Method: GET
-- Purpose: Detailed energy breakdown by meter and timeframe.
-- Params: `api_key`, `startTime`, `endTime`, optional `meters`, `timeUnit`
-
-### 10) Current Power Flow
-- Path: `/site/{siteId}/currentPowerFlow`
-- Method: GET
-- Purpose: Returns the power flow chart (who is producing/consuming/exporting) of the site.
-- Params: `api_key`
-
-### 11) Storage (battery) data
-- Path: `/site/{siteId}/storageData`
-- Method: GET
-- Purpose: Battery state of energy (SoE), power, lifetime energy for storage devices.
-- Params: `api_key`, `startTime`, `endTime`, optional `serials` (comma separated)
-
-### 12) Site Image / Installer Logo
-- Paths: `/site/{siteId}/image` and `/installer/logo` (paths vary)
-- Method: GET
-- Purpose: Fetch uploaded images (site image scaled/original, installer logo).
-- Params: `api_key`, optional sizing/scaling parameters depending on endpoint.
-
-### 13) Components / Inventory
-- Paths: `/site/{siteId}/components`, `/site/{siteId}/inventory` (implementation-specific paths)
-- Method: GET
-- Purpose: Lists inverters, meters, batteries, gateways, sensors with serials and status.
-- Params: `api_key`
-
-### 14) Inverter Technical Data
-- Path: `/site/{siteId}/inverterData` (or `inverter/technicalData` depending on exact API)
-- Method: GET
-- Purpose: Technical performance data for a given inverter for a requested period.
-- Params: `api_key`, `startTime`, `endTime`, inverter identifier
-
-### 15) Equipment Change Log
-- Path: `/site/{siteId}/equipmentChangeLog`
-- Method: GET
-- Purpose: Replacements and changes for site components.
-- Params: `api_key`
-
-### 16) Sensors / Meters
-- Paths: `/site/{siteId}/sensors`, `/site/{siteId}/sensors/data`, `/site/{siteId}/meters`
-- Method: GET
-- Purpose: List of sensors/meters and their measurement data.
-- Params: `api_key`, `startTime`, `endTime`, optional `meters`/`sensors` list
-
-### 17) Account List
-- Path: `/accounts/list`
-- Method: GET
-- Purpose: Returns account-level details and sub-accounts for the provided account token.
-- Params: `api_key`
-
-### 18) API Versions
-- Path: `/api/versions`
-- Method: GET
-- Purpose: Provides the current and supported API version numbers.
-- Params: none or `api_key` depending on endpoint.
-
----
-
-## Server limits and best practices
-
-- Daily limit: 300 requests per account token. Some endpoints that are account-level (no siteId) count against this quota.
-- Per-site limit: 300 requests per site ID (from same source IP) per day.
-- Concurrency: the API allows up to **3 concurrent API calls** from the same source IP. Additional concurrent calls will return HTTP 429.
-- Bulk: many endpoints accept multiple site IDs (comma-separated, up to 100). A bulk call consumes one quota entry for each site included.
-
-## Throttling recommendations for clients
-
-- Implement a simple concurrent worker pool limited to 3 concurrent requests.
-- On HTTP 429, back off with exponential backoff (start with 1s, multiply by 2, jitter) and retry a small number of times.
-- For bulk operations, prefer the bulk endpoint when available to reduce total calls.
-
-## Example usage notes (client implementers)
-
-- Always include `api_key` in params — do not send it in headers unless the API explicitly supports it.
-- Use the `timeUnit` parameter where present to control aggregation (DAY/WEEK/MONTH).
-- Request/response timestamps are typically strings in `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS` format; convert them to timezone-aware datetimes in your client.
-
-## References
-
-- This document is derived from the included project instructions and the SolarEdge Monitoring API specification (se_monitoring_api.pdf).
+- **Per minute:** 10 requests. Remaining calls are reported in
+  `x-ratelimit-limit-minute` and `x-ratelimit-remaining-minute`.
+- **Per month:** 2,000 credits, at 1 credit per call, with no overage.
+- **On a 429:** the response may carry `Retry-After`. This is exposed as
+  `SolarEdgeRateLimitError.retry_after`.

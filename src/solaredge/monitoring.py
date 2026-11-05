@@ -1,81 +1,72 @@
-"""Library to interact with SolarEdge's monitoring API."""
+"""Clients for SolarEdge's Monitoring API (V2)."""
 
 from __future__ import annotations
 
 import asyncio
 from abc import ABC
-from typing import Any, Literal
+from typing import Any
 from datetime import datetime
-from collections.abc import Iterable
+from collections.abc import Mapping, Iterable
 
 import httpx
 
 from . import _endpoints
 from ._endpoints import (
-    Meter,
     Request,
-    TimeUnit,
-    SortOrder,
-    SiteStatus,
-    SystemUnits,
-    MeterReading,
-    SiteSortProperty,
-    ValidatedTimeUnit,
+    PowerUnit,
+    DeviceType,
+    EnergyUnit,
+    Resolution,
 )
 from .exceptions import (
     SolarEdgeResponseError,
-    redact_url,
+    SolarEdgeValidationError,
     error_from_response,
 )
 
-DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com"
+DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com/v2"
 MAX_CONCURRENT_REQUESTS = 3
+API_KEY_HEADER = "X-API-Key"
 
 
 class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interface
     """Shared helpers for monitoring clients.
 
-    Holds URL building, default params, timeout parsing and the request/response
-    plumbing that does not depend on whether I/O is blocking. Concrete clients
-    (sync/async) inherit this and supply only the transport.
+    Holds URL building, authentication, timeout parsing and the
+    request/response plumbing that does not depend on whether I/O is blocking.
+    Concrete clients (sync/async) inherit this and supply only the transport.
     """
 
     def __init__(self, api_key: str, base_url: str | None = None):
+        if not api_key:
+            raise SolarEdgeValidationError("api_key is required.")
         self.api_key = api_key
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+
+    def __repr__(self) -> str:
+        """Describe the client without exposing the API key."""
+        return f"{type(self).__name__}(base_url={self.base_url!r})"
 
     def _build_url(self, *parts: Any) -> str:
         """Join base_url with path parts into a single URL."""
         pieces = [str(p).strip("/") for p in parts if p is not None]
         return "/".join([self.base_url, *pieces])
 
-    def _default_params(self) -> dict:
-        return {"api_key": self.api_key}
+    def _headers(self) -> dict[str, str]:
+        return {API_KEY_HEADER: self.api_key, "Accept": "application/json"}
 
     def _parse_timeout(self, timeout: float | None) -> float:
         return timeout if timeout is not None else 10.0
 
-    def _validate_timeframe(
-        self,
-        time_unit: ValidatedTimeUnit,
-        start_date: datetime,
-        end_date: datetime,
-    ) -> None:
-        """Validate the time frame for API requests.
-
-        throws an error or returns None.
-        """
-        _endpoints.validate_timeframe(time_unit, start_date, end_date)
-
-    def _prepare(self, request: Request) -> tuple[str, dict[str, Any]]:
+    def _prepare(self, request: Request) -> tuple[str, list[tuple[str, Any]]]:
         """Resolve a Request into the URL and query params to send.
 
         Params whose value is None are dropped: httpx encodes them as empty
         query values rather than omitting them.
         """
         url = self._build_url(request.path)
-        combined = {**self._default_params(), **(request.params or {})}
-        return url, {k: v for k, v in combined.items() if v is not None}
+        params = [(k, v) for k, v in (request.params or []) if v is not None]
+        return url, params
 
     @staticmethod
     def _parse_response(response: httpx.Response) -> Any:
@@ -95,14 +86,15 @@ class BaseMonitoringClient(ABC):  # noqa: B024 - shared helpers, not an interfac
         except ValueError as exc:
             raise SolarEdgeResponseError(
                 f"The API returned a non-JSON body (HTTP {response.status_code}) "
-                f"for {redact_url(response.request.url)}"
+                f"for {response.request.url}"
             ) from exc
 
 
 class AsyncMonitoringClient(BaseMonitoringClient):
-    """Asynchronous client for the SolarEdge Monitoring API.
+    """Asynchronous client for the SolarEdge Monitoring API (V2).
 
-    Automatically limits concurrent requests to 3 per the API specification.
+    Authenticates with a Fleet Access API key, sent in the ``X-API-Key``
+    header. Limits itself to 3 concurrent requests.
 
     Usage:
         async with AsyncMonitoringClient(api_key) as client:
@@ -116,15 +108,10 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         timeout: float | None = 10.0,
         base_url: str | None = None,
     ) -> None:
-        super().__init__(
-            api_key=api_key,
-            base_url=base_url,
-        )
+        super().__init__(api_key=api_key, base_url=base_url)
         self._external_client = client is not None
         self._timeout = self._parse_timeout(timeout)
         self.client = client or httpx.AsyncClient(timeout=self._timeout)
-
-        # Semaphore to limit concurrent requests per SolarEdge API specification
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     async def __aenter__(self) -> AsyncMonitoringClient:
@@ -141,14 +128,13 @@ class AsyncMonitoringClient(BaseMonitoringClient):
         If this instance created the internal httpx.AsyncClient it will be
         closed; externally-provided clients are not closed.
         """
-        if not self._external_client:
-            await self.client.aclose()
+        await self.aclose()
 
     async def aclose(self) -> None:
         """Close the internal httpx.AsyncClient if this instance created it.
 
         Does nothing when the client was supplied by the caller, who owns its
-        lifetime. This matches __aexit__, which no-ops in the same case.
+        lifetime.
         """
         if self._external_client:
             return
@@ -156,187 +142,123 @@ class AsyncMonitoringClient(BaseMonitoringClient):
 
     async def _send(self, request: Request) -> Any:
         """Send a prepared request, respecting the concurrency limit."""
-        async with self._semaphore:  # Acquire semaphore before making request
+        async with self._semaphore:
             url, params = self._prepare(request)
             response = await self.client.request(
                 method=request.method,
                 url=url,
                 params=params,
+                headers=self._headers(),
             )
             return self._parse_response(response)
 
-    async def get_site_list(
-        self,
-        size: int = 100,
-        start_index: int = 0,
-        search_text: str | None = None,
-        sort_property: SiteSortProperty | None = None,
-        sort_order: SortOrder = "ASC",
-        status: list[SiteStatus] | Literal["All"] | None = None,
-    ) -> dict:
-        """Return a paginated list of sites for the account (async).
+    async def get(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
+        """GET any V2 path, for endpoints without a dedicated method (async).
 
         Args:
-            size: Number of sites to return per page (max 100)
-            start_index: Starting index for pagination
-            search_text: Text to search for across multiple fields. The API will
-                search in: Name, Notes, Email, Country, State, City, Zip
-            sort_property: Property to sort by
-            sort_order: Sort order ("ASC" or "DESC")
-            status: Site status filter (["Active", "Pending"] by default)
+            path: Path relative to the base URL, e.g. ``"sites/123/alerts"``.
+            params: Query parameters. Datetimes must be timezone-aware and are
+                sent as ISO 8601; list values are sent as a repeated key.
         """
-        return await self._send(
-            _endpoints.site_list(
-                size, start_index, search_text, sort_property, sort_order, status
-            )
-        )
+        return await self._send(_endpoints.raw(path, params))
+
+    async def get_sites(self) -> Any:
+        """Return the sites this API key can access (async).
+
+        Listing sites requires Fleet Access.
+        """
+        return await self._send(_endpoints.sites())
 
     async def get_site_details(self, site_id: int) -> dict:
-        """Get site details (async)."""
+        """Return a site's details (async)."""
         return await self._send(_endpoints.site_details(site_id))
 
-    async def get_site_data(self, site_ids: list[int]) -> dict:
-        """Return the site's energy data period (start/end) (async)."""
-        return await self._send(_endpoints.site_data(site_ids))
+    async def get_overview(
+        self,
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> dict:
+        """Return the site overview, optionally for a time range (async).
+
+        Covers production, consumption, grid and storage figures.
+        """
+        return await self._send(_endpoints.overview(site_id, start, end))
 
     async def get_energy(
         self,
-        site_ids: list[int],
-        start_date: datetime,
-        end_date: datetime,
-        time_unit: TimeUnit = "DAY",
+        site_id: int,
+        start: datetime,
+        end: datetime,
+        resolution: Resolution = "DAY",
+        unit: EnergyUnit = "WH",
     ) -> dict:
-        """Get aggregated energy for a site between two dates (async).
-
-        this endpoint returns the same energy measurements
-        that appear in the Site Dashboard.
-        """
+        """Return site energy between two timezone-aware datetimes (async)."""
         return await self._send(
-            _endpoints.energy(site_ids, start_date, end_date, time_unit)
-        )
-
-    async def get_time_frame_energy(
-        self,
-        site_ids: list[int],
-        start_date: datetime,
-        end_date: datetime,
-        time_unit: TimeUnit = "DAY",
-    ) -> dict:
-        """Get time-frame energy (async).
-
-        This endpoint only returns on-grid energy for the requested period.
-        In sites with storage/backup, this may mean that results can differ from what appears in the Site Dashboard.
-        Use the regular Site Energy API to obtain results that match the Site Dashboard calculation.
-        """  # noqa: E501
-        return await self._send(
-            _endpoints.time_frame_energy(site_ids, start_date, end_date, time_unit)
+            _endpoints.energy(site_id, start, end, resolution, unit)
         )
 
     async def get_power(
         self,
         site_id: int,
-        start_time: datetime,
-        end_time: datetime,
+        start: datetime,
+        end: datetime,
+        resolution: Resolution = "QUARTER_HOUR",
+        unit: PowerUnit = "W",
     ) -> dict:
-        """Return power measurements (15-minute resolution) for a timeframe (async)."""
-        return await self._send(_endpoints.power(site_id, start_time, end_time))
+        """Return site power between two timezone-aware datetimes (async).
 
-    async def get_overview(self, site_ids: list[int]) -> dict:
-        """Return a site overview (async)."""
-        return await self._send(_endpoints.overview(site_ids))
+        QUARTER_HOUR is the finest resolution the API offers; each value is
+        the average over its interval, not an instantaneous reading.
+        """
+        return await self._send(_endpoints.power(site_id, start, end, resolution, unit))
 
-    async def get_power_details(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        meters: Iterable[Meter] | None = None,
-    ) -> dict:
-        """Return detailed power measurements including optional meters (async)."""
-        return await self._send(
-            _endpoints.power_details(site_id, start_time, end_time, meters)
-        )
-
-    async def get_energy_details(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        meters: Iterable[Meter] | None = None,
-        time_unit: TimeUnit = "DAY",
-    ) -> dict:
-        """Return detailed energy breakdown (by meter/timeUnit) (async)."""
-        return await self._send(
-            _endpoints.energy_details(site_id, start_time, end_time, meters, time_unit)
-        )
+    async def get_lifetime_energy(self, site_id: int) -> dict:
+        """Return the site's lifetime production counter (async)."""
+        return await self._send(_endpoints.lifetime_energy(site_id))
 
     async def get_current_power_flow(self, site_id: int) -> dict:
-        """Return the current power flow (async)."""
-        return await self._send(_endpoints.current_power_flow(site_id))
+        """Return the site's current power flow (async).
 
-    async def get_storage_data(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        serials: Iterable[str] | None = None,
-    ) -> dict:
-        """Return storage (battery) measurements for the timeframe (async)."""
-        return await self._send(
-            _endpoints.storage_data(site_id, start_time, end_time, serials)
-        )
-
-    async def get_environmental_benefits(
-        self,
-        site_id: int,
-        system_units: SystemUnits | None = None,
-    ) -> dict:
-        """Return the environmental benefits (async)."""
-        return await self._send(
-            _endpoints.environmental_benefits(site_id, system_units)
-        )
-
-    async def get_components_list(self, site_id: int) -> dict:
-        """Return a list of inverters/SMIs in the specific site. (async)."""
-        return await self._send(_endpoints.components_list(site_id))
-
-    async def get_inventory(self, site_id: int) -> dict:
-        """Return the inventory of SolarEdge equipment in the site (async).
-
-        Including inverters/SMIs, batteries, meters, gateways and sensors.
+        Requires an Advanced Monitoring plan; other plans get HTTP 403, raised
+        as SolarEdgeAuthError.
         """
-        return await self._send(_endpoints.inventory(site_id))
+        return await self._send(_endpoints.power_flow(site_id))
 
-    async def get_inverter_technical_data(
+    async def get_devices(
         self,
         site_id: int,
-        serial_number: str,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> dict:
-        """Return specific inverter data for a given timeframe (async)."""
-        return await self._send(
-            _endpoints.inverter_technical_data(
-                site_id, serial_number, start_time, end_time
-            )
-        )
+        types: Iterable[DeviceType] | None = None,
+    ) -> Any:
+        """Return the site's devices, optionally filtered by type (async).
 
-    async def get_meters(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        time_unit: TimeUnit = "DAY",
-        meters: Iterable[MeterReading] | None = None,
-    ) -> dict:
-        """Return a list of meters in the specific site. (async).
-
-        Returns for each meter on site its lifetime energy reading,
-        metadata and the device to which it's connected to.
+        Replaces V1's inventory and components list.
         """
-        return await self._send(
-            _endpoints.meters(site_id, start_time, end_time, time_unit, meters)
-        )
+        return await self._send(_endpoints.devices(site_id, types))
+
+    async def get_storage_lifetime_energy(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return battery charge/discharge counters for a time range (async)."""
+        return await self._send(_endpoints.storage_lifetime_energy(site_id, start, end))
+
+    async def get_storage_telemetry(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return battery telemetry for a time range (async)."""
+        return await self._send(_endpoints.storage_telemetry(site_id, start, end))
+
+    async def get_meters_telemetry(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return meter telemetry for a time range (async)."""
+        return await self._send(_endpoints.meters_telemetry(site_id, start, end))
+
+    async def get_inverters_telemetry(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return inverter telemetry for a time range (async)."""
+        return await self._send(_endpoints.inverters_telemetry(site_id, start, end))
 
 
 class MonitoringClient(BaseMonitoringClient):
@@ -354,10 +276,7 @@ class MonitoringClient(BaseMonitoringClient):
         timeout: float | None = 10.0,
         base_url: str | None = None,
     ) -> None:
-        super().__init__(
-            api_key=api_key,
-            base_url=base_url,
-        )
+        super().__init__(api_key=api_key, base_url=base_url)
         self._external_client = client is not None
         self._timeout = self._parse_timeout(timeout)
         self.client = client or httpx.Client(timeout=self._timeout)
@@ -365,8 +284,8 @@ class MonitoringClient(BaseMonitoringClient):
     def __enter__(self) -> MonitoringClient:
         """Enter the synchronous context manager and return self.
 
-        When used as `with MonitoringClient(...)`, the internal httpx.Client
-        will be closed on exit if this client created it.
+        The internal httpx.Client will be closed on exit if this client
+        created it.
         """
         return self
 
@@ -376,14 +295,13 @@ class MonitoringClient(BaseMonitoringClient):
         If this client created the internal httpx.Client it will be closed;
         externally-provided clients are not closed.
         """
-        if not self._external_client:
-            self.client.close()
+        self.close()
 
     def close(self) -> None:
         """Close the internal httpx.Client if this instance created it.
 
         Does nothing when the client was supplied by the caller, who owns its
-        lifetime. This matches __exit__, which no-ops in the same case.
+        lifetime.
         """
         if self._external_client:
             return
@@ -396,177 +314,112 @@ class MonitoringClient(BaseMonitoringClient):
             method=request.method,
             url=url,
             params=params,
+            headers=self._headers(),
         )
         return self._parse_response(response)
 
-    def get_site_list(
-        self,
-        size: int = 100,
-        start_index: int = 0,
-        search_text: str | None = None,
-        sort_property: SiteSortProperty | None = None,
-        sort_order: SortOrder = "ASC",
-        status: list[SiteStatus] | Literal["All"] | None = None,
-    ) -> dict:
-        """Return a paginated list of sites for the account (sync).
+    def get(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
+        """GET any V2 path, for endpoints without a dedicated method (sync).
 
         Args:
-            size: Number of sites to return per page (max 100)
-            start_index: Starting index for pagination
-            search_text: Text to search for across multiple fields. The API will
-                search in: Name, Notes, Email, Country, State, City, Zip
-            sort_property: Property to sort by
-            sort_order: Sort order ("ASC" or "DESC")
-            status: Site status filter (["Active", "Pending"] by default)
+            path: Path relative to the base URL, e.g. ``"sites/123/alerts"``.
+            params: Query parameters. Datetimes must be timezone-aware and are
+                sent as ISO 8601; list values are sent as a repeated key.
         """
-        return self._send(
-            _endpoints.site_list(
-                size, start_index, search_text, sort_property, sort_order, status
-            )
-        )
+        return self._send(_endpoints.raw(path, params))
+
+    def get_sites(self) -> Any:
+        """Return the sites this API key can access (sync).
+
+        Listing sites requires Fleet Access.
+        """
+        return self._send(_endpoints.sites())
 
     def get_site_details(self, site_id: int) -> dict:
-        """Get site details (sync).
-
-        Returns parsed JSON from `/site/{siteId}/details`.
-        """
+        """Return a site's details (sync)."""
         return self._send(_endpoints.site_details(site_id))
 
-    def get_site_data(self, site_ids: list[int]) -> dict:
-        """Return the site's energy data period (start/end) (sync)."""
-        return self._send(_endpoints.site_data(site_ids))
+    def get_overview(
+        self,
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> dict:
+        """Return the site overview, optionally for a time range (sync).
+
+        Covers production, consumption, grid and storage figures.
+        """
+        return self._send(_endpoints.overview(site_id, start, end))
 
     def get_energy(
         self,
-        site_ids: list[int],
-        start_date: datetime,
-        end_date: datetime,
-        time_unit: TimeUnit = "DAY",
+        site_id: int,
+        start: datetime,
+        end: datetime,
+        resolution: Resolution = "DAY",
+        unit: EnergyUnit = "WH",
     ) -> dict:
-        """Get aggregated energy for a site between two dates (sync).
-
-        this endpoint returns the same energy measurements
-        that appear in the Site Dashboard.
-        """
-        return self._send(_endpoints.energy(site_ids, start_date, end_date, time_unit))
-
-    def get_time_frame_energy(
-        self,
-        site_ids: list[int],
-        start_date: datetime,
-        end_date: datetime,
-        time_unit: TimeUnit = "DAY",
-    ) -> dict:
-        """Get time-frame energy (sync).
-
-        This endpoint only returns on-grid energy for the requested period.
-        In sites with storage/backup, this may mean that results can differ from what appears in the Site Dashboard.
-        Use the regular Site Energy API to obtain results that match the Site Dashboard calculation.
-        """  # noqa: E501
-        return self._send(
-            _endpoints.time_frame_energy(site_ids, start_date, end_date, time_unit)
-        )
+        """Return site energy between two timezone-aware datetimes (sync)."""
+        return self._send(_endpoints.energy(site_id, start, end, resolution, unit))
 
     def get_power(
         self,
         site_id: int,
-        start_time: datetime,
-        end_time: datetime,
+        start: datetime,
+        end: datetime,
+        resolution: Resolution = "QUARTER_HOUR",
+        unit: PowerUnit = "W",
     ) -> dict:
-        """Return power measurements (15-minute resolution) for a timeframe (sync)."""
-        return self._send(_endpoints.power(site_id, start_time, end_time))
+        """Return site power between two timezone-aware datetimes (sync).
 
-    def get_overview(self, site_ids: list[int]) -> dict:
-        """Return a site overview (sync)."""
-        return self._send(_endpoints.overview(site_ids))
+        QUARTER_HOUR is the finest resolution the API offers; each value is
+        the average over its interval, not an instantaneous reading.
+        """
+        return self._send(_endpoints.power(site_id, start, end, resolution, unit))
 
-    def get_power_details(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        meters: Iterable[Meter] | None = None,
-    ) -> dict:
-        """Return detailed power measurements including optional meters (sync)."""
-        return self._send(
-            _endpoints.power_details(site_id, start_time, end_time, meters)
-        )
-
-    def get_energy_details(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        meters: Iterable[Meter] | None = None,
-        time_unit: TimeUnit = "DAY",
-    ) -> dict:
-        """Return detailed energy breakdown (by meter/timeUnit) (sync)."""
-        return self._send(
-            _endpoints.energy_details(site_id, start_time, end_time, meters, time_unit)
-        )
+    def get_lifetime_energy(self, site_id: int) -> dict:
+        """Return the site's lifetime production counter (sync)."""
+        return self._send(_endpoints.lifetime_energy(site_id))
 
     def get_current_power_flow(self, site_id: int) -> dict:
-        """Return the current power flow (sync)."""
-        return self._send(_endpoints.current_power_flow(site_id))
+        """Return the site's current power flow (sync).
 
-    def get_storage_data(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        serials: Iterable[str] | None = None,
-    ) -> dict:
-        """Return storage (battery) measurements for the timeframe (sync)."""
-        return self._send(
-            _endpoints.storage_data(site_id, start_time, end_time, serials)
-        )
-
-    def get_environmental_benefits(
-        self,
-        site_id: int,
-        system_units: SystemUnits | None = None,
-    ) -> dict:
-        """Return the environmental benefits (sync)."""
-        return self._send(_endpoints.environmental_benefits(site_id, system_units))
-
-    def get_components_list(self, site_id: int) -> dict:
-        """Return a list of inverters/SMIs in the specific site. (sync)."""
-        return self._send(_endpoints.components_list(site_id))
-
-    def get_inventory(self, site_id: int) -> dict:
-        """Return the inventory of SolarEdge equipment in the site (sync).
-
-        Including inverters/SMIs, batteries, meters, gateways and sensors.
+        Requires an Advanced Monitoring plan; other plans get HTTP 403, raised
+        as SolarEdgeAuthError.
         """
-        return self._send(_endpoints.inventory(site_id))
+        return self._send(_endpoints.power_flow(site_id))
 
-    def get_inverter_technical_data(
+    def get_devices(
         self,
         site_id: int,
-        serial_number: str,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> dict:
-        """Return specific inverter data for a given timeframe (sync)."""
-        return self._send(
-            _endpoints.inverter_technical_data(
-                site_id, serial_number, start_time, end_time
-            )
-        )
+        types: Iterable[DeviceType] | None = None,
+    ) -> Any:
+        """Return the site's devices, optionally filtered by type (sync).
 
-    def get_meters(
-        self,
-        site_id: int,
-        start_time: datetime,
-        end_time: datetime,
-        time_unit: TimeUnit = "DAY",
-        meters: Iterable[MeterReading] | None = None,
-    ) -> dict:
-        """Return a list of meters in the specific site. (sync).
-
-        Returns for each meter on site its lifetime energy reading,
-        metadata and the device to which it's connected to.
+        Replaces V1's inventory and components list.
         """
-        return self._send(
-            _endpoints.meters(site_id, start_time, end_time, time_unit, meters)
-        )
+        return self._send(_endpoints.devices(site_id, types))
+
+    def get_storage_lifetime_energy(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return battery charge/discharge counters for a time range (sync)."""
+        return self._send(_endpoints.storage_lifetime_energy(site_id, start, end))
+
+    def get_storage_telemetry(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return battery telemetry for a time range (sync)."""
+        return self._send(_endpoints.storage_telemetry(site_id, start, end))
+
+    def get_meters_telemetry(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return meter telemetry for a time range (sync)."""
+        return self._send(_endpoints.meters_telemetry(site_id, start, end))
+
+    def get_inverters_telemetry(
+        self, site_id: int, start: datetime, end: datetime
+    ) -> dict:
+        """Return inverter telemetry for a time range (sync)."""
+        return self._send(_endpoints.inverters_telemetry(site_id, start, end))

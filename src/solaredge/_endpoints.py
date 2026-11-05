@@ -4,328 +4,196 @@ Every builder here is a pure function: it validates its arguments, assembles
 the request path and query parameters, and returns a :class:`Request`. No I/O
 happens in this module, so both clients share a single definition of each
 endpoint and can be thin transport wrappers around it.
+
+Paths are relative to the V2 base URL (``https://monitoringapi.solaredge.com/v2``).
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal, NamedTuple
-from datetime import datetime, timedelta
-from collections.abc import Iterable
+from datetime import datetime
+from collections.abc import Mapping, Iterable
 
 from .exceptions import SolarEdgeValidationError
 
 # Shared vocabulary for the API's enumerated values. Defined once here and
-# reused in both clients' public signatures.
-TimeUnit = Literal["QUARTER_OF_AN_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"]
-SortOrder = Literal["ASC", "DESC"]
-SiteStatus = Literal["Active", "Pending", "Disabled"]
-SystemUnits = Literal["Metrics", "Imperial"]
-Meter = Literal[
-    "Production",
-    "Consumption",
-    "SelfConsumption",
-    "FeedIn",
-    "Purchased",
-]
-MeterReading = Literal["Production", "Consumption", "FeedIn", "Purchased"]
-SiteSortProperty = Literal[
-    "Name",
-    "Country",
-    "State",
-    "City",
-    "Address",
-    "Zip",
-    "Status",
-    "PeakPower",
-    "InstallationDate",
-    "Amount",
-    "MaxSeverity",
-]
-
-# `_ONE_WEEK_MAX` is not an API time unit; it selects the one-week ceiling for
-# endpoints that impose one without taking a timeUnit parameter.
-ValidatedTimeUnit = Literal[
-    "QUARTER_OF_AN_HOUR",
-    "HOUR",
-    "DAY",
-    "_ONE_WEEK_MAX",
-    "WEEK",
-    "MONTH",
-    "YEAR",
-]
-
-MAX_SITES_PER_REQUEST = 100
-MAX_PAGE_SIZE = 100
-
-_DATE_FORMAT = "%Y-%m-%d"
-_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+# reused in both clients' public signatures. These are type hints only: values
+# are passed through unchanged, so a value SolarEdge adds later still works.
+Resolution = Literal["QUARTER_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR"]
+EnergyUnit = Literal["WH", "KWH", "MWH"]
+PowerUnit = Literal["W", "KW", "MW"]
+DeviceType = Literal["INVERTER", "METER", "BATTERY", "GATEWAY"]
 
 
 class Request(NamedTuple):
-    """A fully-described API request, independent of how it is sent."""
+    """A fully-described API request, independent of how it is sent.
+
+    ``params`` is a list of pairs rather than a dict so a key can repeat, as
+    ``/devices`` expects for ``types``.
+    """
 
     method: str
     path: str
-    params: dict[str, Any] | None = None
+    params: list[tuple[str, Any]] | None = None
 
 
-def validate_timeframe(
-    time_unit: ValidatedTimeUnit,
-    start_date: datetime,
-    end_date: datetime,
-) -> None:
-    """Validate a requested time frame against the API's documented limits.
+def format_datetime(value: datetime, name: str = "datetime") -> str:
+    """Render a timezone-aware datetime in the ISO 8601 form V2 expects.
 
-    Raises:
-        ValueError: If the range is inverted or exceeds the limit for the unit.
-    """
-    delta = end_date - start_date
-
-    if delta < timedelta(0):
-        raise SolarEdgeValidationError("End date must be after start date.")
-
-    if time_unit == "_ONE_WEEK_MAX":
-        if delta > timedelta(days=7):
-            raise SolarEdgeValidationError("The maximum date range is 1 week (7 days).")
-
-    if time_unit in ("QUARTER_OF_AN_HOUR", "HOUR"):
-        if delta > timedelta(days=31):
-            raise SolarEdgeValidationError(
-                f"For time_unit {time_unit}, "
-                "the maximum date range is 1 month (31 days)."
-            )
-    if time_unit == "DAY":
-        if delta > timedelta(days=365):
-            raise SolarEdgeValidationError(
-                f"For time_unit {time_unit}, "
-                "the maximum date range is 1 year (365 days)."
-            )
-
-
-def _site_ids(site_ids: Iterable[int]) -> str:
-    """Render site IDs as the API's comma-separated form, enforcing its limits.
+    V2 rejects timestamps without an offset, so a naive datetime is refused
+    locally rather than guessed at.
 
     Raises:
-        SolarEdgeValidationError: If the collection is empty or exceeds the
-            documented 100-site maximum.
+        SolarEdgeValidationError: If ``value`` has no timezone.
     """
-    ids = list(site_ids)
-    if not ids:
-        raise SolarEdgeValidationError("At least one site ID is required.")
-    if len(ids) > MAX_SITES_PER_REQUEST:
+    if value.tzinfo is None or value.utcoffset() is None:
         raise SolarEdgeValidationError(
-            f"Cannot request data for more than {MAX_SITES_PER_REQUEST} "
-            f"sites at once; got {len(ids)}."
+            f"{name} must be timezone-aware, e.g. "
+            "datetime(2026, 1, 1, tzinfo=timezone.utc); got a naive datetime."
         )
-    return ",".join(map(str, ids))
+    return value.isoformat(timespec="seconds")
 
 
-def site_list(
-    size: int,
-    start_index: int,
-    search_text: str | None,
-    sort_property: SiteSortProperty | None,
-    sort_order: SortOrder,
-    status: list[SiteStatus] | Literal["All"] | None,
-) -> Request:
-    """Build the request for a paginated list of sites."""
-    if size > MAX_PAGE_SIZE:
+def _time_range(start: datetime, end: datetime) -> list[tuple[str, Any]]:
+    """Validate a time range and render it as V2 ``from``/``to`` params."""
+    params = [
+        ("from", format_datetime(start, "start")),
+        ("to", format_datetime(end, "end")),
+    ]
+    if end < start:
+        raise SolarEdgeValidationError("end must not be before start.")
+    return params
+
+
+def _site_path(site_id: int | str, *parts: str) -> str:
+    """Build ``sites/{id}/...``, refusing IDs that are not plain digits.
+
+    Validating here keeps a malformed ID from producing a different path,
+    e.g. ``"1/../2"``.
+    """
+    sid = str(site_id)
+    if isinstance(site_id, bool) or not (sid.isascii() and sid.isdecimal()):
         raise SolarEdgeValidationError(
-            f"size cannot exceed {MAX_PAGE_SIZE}; got {size}."
+            f"site_id must be a positive integer; got {site_id!r}."
         )
-    if status is None:
-        status = ["Active", "Pending"]
-
-    params: dict[str, Any] = {
-        "size": size,
-        "startIndex": start_index,
-        "sortOrder": sort_order,
-        "status": status if status == "All" else ",".join(status),
-    }
-    if search_text:
-        params["searchText"] = search_text
-    if sort_property:
-        params["sortProperty"] = sort_property
-    return Request("GET", "sites/list", params)
+    return "/".join(["sites", sid, *parts])
 
 
-def site_details(site_id: int) -> Request:
+def sites() -> Request:
+    """Build the request for the sites this key can access (Fleet Access)."""
+    return Request("GET", "sites")
+
+
+def site_details(site_id: int | str) -> Request:
     """Build the request for a single site's details."""
-    return Request("GET", f"site/{site_id}/details")
+    return Request("GET", _site_path(site_id))
 
 
-def site_data(site_ids: list[int]) -> Request:
-    """Build the request for the sites' energy data period."""
-    return Request("GET", f"site/{_site_ids(site_ids)}/dataPeriod")
+def overview(
+    site_id: int | str,
+    start: datetime | None,
+    end: datetime | None,
+) -> Request:
+    """Build the request for a site overview, optionally for a time range."""
+    if (start is None) != (end is None):
+        raise SolarEdgeValidationError("Pass both start and end, or neither.")
+    params = _time_range(start, end) if start and end else None
+    return Request("GET", _site_path(site_id, "overview"), params)
 
 
 def energy(
-    site_ids: list[int],
-    start_date: datetime,
-    end_date: datetime,
-    time_unit: TimeUnit,
+    site_id: int | str,
+    start: datetime,
+    end: datetime,
+    resolution: Resolution,
+    unit: EnergyUnit,
 ) -> Request:
-    """Build the request for aggregated site energy."""
-    validate_timeframe(time_unit, start_date, end_date)
+    """Build the request for site energy over a time range."""
     return Request(
         "GET",
-        f"site/{_site_ids(site_ids)}/energy",
-        {
-            "startDate": start_date.strftime(_DATE_FORMAT),
-            "endDate": end_date.strftime(_DATE_FORMAT),
-            "timeUnit": time_unit,
-        },
+        _site_path(site_id, "energy"),
+        [*_time_range(start, end), ("resolution", resolution), ("unit", unit)],
     )
 
 
-def time_frame_energy(
-    site_ids: list[int],
-    start_date: datetime,
-    end_date: datetime,
-    time_unit: TimeUnit,
+def power(
+    site_id: int | str,
+    start: datetime,
+    end: datetime,
+    resolution: Resolution,
+    unit: PowerUnit,
 ) -> Request:
-    """Build the request for on-grid energy over a time frame."""
-    validate_timeframe(time_unit, start_date, end_date)
+    """Build the request for site power over a time range."""
     return Request(
         "GET",
-        f"site/{_site_ids(site_ids)}/timeFrameEnergy",
-        {
-            "startDate": start_date.strftime(_DATE_FORMAT),
-            "endDate": end_date.strftime(_DATE_FORMAT),
-            "timeUnit": time_unit,
-        },
+        _site_path(site_id, "power"),
+        [*_time_range(start, end), ("resolution", resolution), ("unit", unit)],
     )
 
 
-def power(site_id: int, start_time: datetime, end_time: datetime) -> Request:
-    """Build the request for 15-minute-resolution power measurements."""
-    validate_timeframe("QUARTER_OF_AN_HOUR", start_time, end_time)
-    return Request(
-        "GET",
-        f"site/{site_id}/power",
-        {
-            "startTime": start_time.strftime(_DATETIME_FORMAT),
-            "endTime": end_time.strftime(_DATETIME_FORMAT),
-        },
-    )
+def lifetime_energy(site_id: int | str) -> Request:
+    """Build the request for the site's lifetime production counter."""
+    return Request("GET", _site_path(site_id, "lifetime-energy"))
 
 
-def overview(site_ids: list[int]) -> Request:
-    """Build the request for a site overview."""
-    return Request("GET", f"site/{_site_ids(site_ids)}/overview")
-
-
-def power_details(
-    site_id: int,
-    start_time: datetime,
-    end_time: datetime,
-    meters: Iterable[Meter] | None,
-) -> Request:
-    """Build the request for detailed power measurements."""
-    validate_timeframe("QUARTER_OF_AN_HOUR", start_time, end_time)
-    params: dict[str, Any] = {
-        "startTime": start_time.strftime(_DATETIME_FORMAT),
-        "endTime": end_time.strftime(_DATETIME_FORMAT),
-    }
-    if meters:
-        params["meters"] = ",".join(meters)
-    return Request("GET", f"site/{site_id}/powerDetails", params)
-
-
-def energy_details(
-    site_id: int,
-    start_time: datetime,
-    end_time: datetime,
-    meters: Iterable[Meter] | None,
-    time_unit: TimeUnit,
-) -> Request:
-    """Build the request for a detailed energy breakdown."""
-    validate_timeframe(time_unit, start_time, end_time)
-    params: dict[str, Any] = {
-        "startTime": start_time.strftime(_DATETIME_FORMAT),
-        "endTime": end_time.strftime(_DATETIME_FORMAT),
-        "timeUnit": time_unit,
-    }
-    if meters:
-        params["meters"] = ",".join(meters)
-    return Request("GET", f"site/{site_id}/energyDetails", params)
-
-
-def current_power_flow(site_id: int) -> Request:
+def power_flow(site_id: int | str) -> Request:
     """Build the request for the site's current power flow."""
-    return Request("GET", f"site/{site_id}/currentPowerFlow")
+    return Request("GET", _site_path(site_id, "power-flow"))
 
 
-def storage_data(
-    site_id: int,
-    start_time: datetime,
-    end_time: datetime,
-    serials: Iterable[str] | None,
+def devices(site_id: int | str, types: Iterable[DeviceType] | None) -> Request:
+    """Build the request for the site's devices, optionally filtered by type."""
+    params = [("types", t) for t in types] if types else None
+    return Request("GET", _site_path(site_id, "devices"), params)
+
+
+def storage_lifetime_energy(
+    site_id: int | str, start: datetime, end: datetime
 ) -> Request:
-    """Build the request for battery measurements."""
-    validate_timeframe("_ONE_WEEK_MAX", start_time, end_time)
-    params: dict[str, Any] = {
-        "startTime": start_time.strftime(_DATETIME_FORMAT),
-        "endTime": end_time.strftime(_DATETIME_FORMAT),
-    }
-    if serials:
-        params["serials"] = ",".join(serials)
-    return Request("GET", f"site/{site_id}/storageData", params)
-
-
-def environmental_benefits(site_id: int, system_units: SystemUnits | None) -> Request:
-    """Build the request for the site's environmental benefits."""
+    """Build the request for battery charge/discharge counters over a range."""
     return Request(
         "GET",
-        f"site/{site_id}/envBenefits",
-        {"systemUnits": system_units},
+        _site_path(site_id, "storage", "lifetime-energy"),
+        _time_range(start, end),
     )
 
 
-def components_list(site_id: int) -> Request:
-    """Build the request for the site's inverters and SMIs."""
-    return Request("GET", f"equipment/{site_id}/list")
-
-
-def inventory(site_id: int) -> Request:
-    """Build the request for the site's equipment inventory."""
-    return Request("GET", f"site/{site_id}/inventory")
-
-
-def inverter_technical_data(
-    site_id: int,
-    serial_number: str,
-    start_time: datetime,
-    end_time: datetime,
-) -> Request:
-    """Build the request for a single inverter's technical data."""
-    validate_timeframe("_ONE_WEEK_MAX", start_time, end_time)
+def storage_telemetry(site_id: int | str, start: datetime, end: datetime) -> Request:
+    """Build the request for battery telemetry over a time range."""
     return Request(
-        "GET",
-        f"site/{site_id}/inverter/{serial_number}/data",
-        {
-            "startTime": start_time.strftime(_DATETIME_FORMAT),
-            "endTime": end_time.strftime(_DATETIME_FORMAT),
-        },
+        "GET", _site_path(site_id, "storage", "telemetry"), _time_range(start, end)
     )
 
 
-def meters(
-    site_id: int,
-    start_time: datetime,
-    end_time: datetime,
-    time_unit: TimeUnit,
-    meters: Iterable[MeterReading] | None,
-) -> Request:
-    """Build the request for the site's meters and their readings."""
-    validate_timeframe(time_unit, start_time, end_time)
+def meters_telemetry(site_id: int | str, start: datetime, end: datetime) -> Request:
+    """Build the request for meter telemetry over a time range."""
     return Request(
-        "GET",
-        f"site/{site_id}/meters",
-        {
-            "startTime": start_time.strftime(_DATETIME_FORMAT),
-            "endTime": end_time.strftime(_DATETIME_FORMAT),
-            "timeUnit": time_unit,
-            "meters": ",".join(meters) if meters else None,
-        },
+        "GET", _site_path(site_id, "meters", "telemetry"), _time_range(start, end)
     )
+
+
+def inverters_telemetry(site_id: int | str, start: datetime, end: datetime) -> Request:
+    """Build the request for inverter telemetry over a time range."""
+    return Request(
+        "GET", _site_path(site_id, "inverters", "telemetry"), _time_range(start, end)
+    )
+
+
+def raw(path: str, params: Mapping[str, Any] | None) -> Request:
+    """Build a GET for any V2 path, for endpoints without a dedicated method.
+
+    Datetime values are rendered the same way as in the dedicated methods, and
+    list or tuple values become a repeated key.
+    """
+    path = path.strip("/")
+    if not path or ".." in path.split("/"):
+        raise SolarEdgeValidationError(f"Invalid API path: {path!r}.")
+
+    pairs: list[tuple[str, Any]] = []
+    for key, value in (params or {}).items():
+        values = value if isinstance(value, (list, tuple)) else [value]
+        pairs.extend(
+            (key, format_datetime(v, key) if isinstance(v, datetime) else v)
+            for v in values
+        )
+    return Request("GET", path, pairs or None)
