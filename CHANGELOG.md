@@ -1,3 +1,17 @@
+## 3.0.0 (2026-11-05)
+
+### BREAKING CHANGE
+
+- V1 API keys no longer work; a V2 API key is required.
+All 2.x methods with no V2 equivalent are removed, and the rest take a
+single site_id, timezone-aware start/end datetimes (naive ones raise
+SolarEdgeValidationError) and V2 parameter names such as resolution and
+unit. Response bodies follow V2's shapes. redact_url is removed.
+
+### Feat
+
+- migrate to Monitoring API V2 with full endpoint coverage (#123)
+
 ## 2.0.0 (2026-09-06)
 
 ### BREAKING CHANGE
