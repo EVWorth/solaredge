@@ -1,7 +1,7 @@
 """Tests for the monitoring module."""
 
 from typing import Any
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import httpx
 import pytest
@@ -19,134 +19,419 @@ from solaredge import (
 )
 
 API_KEY = "test_key"
-BASE = "https://monitoringapi.solaredge.com"
+BASE_PATH = "/v2"
 
-# Within every timeframe limit (1 week, 1 month, 1 year), so a single pair of
-# dates can drive every method that validates a range.
-START = datetime(2024, 1, 1)
-END = datetime(2024, 1, 5)
+UTC = timezone.utc
+START = datetime(2026, 1, 1, tzinfo=UTC)
+END = datetime(2026, 1, 2, tzinfo=UTC)
+FROM = "2026-01-01T00:00:00Z"
+TO = "2026-01-02T00:00:00Z"
+RANGE = [("from", FROM), ("to", TO)]
+WIN = {"start": START, "end": END}
+SN = "7E1234AB-01"
 
-DATE_START = "2024-01-01"
-DATE_END = "2024-01-05"
-TIME_START = "2024-01-01 00:00:00"
-TIME_END = "2024-01-05 00:00:00"
+Params = list[tuple[str, str]]
 
-# (method name, kwargs, expected path, expected query params minus api_key)
-ENDPOINTS: list[tuple[str, dict[str, Any], str, dict[str, str]]] = [
+
+def _measurement(
+    method: str, family: str, metric: str, unit: str | None
+) -> list[tuple[str, dict[str, Any], str, str, Params]]:
+    """Cases for a per-device measurement: defaults, then every argument."""
+    base = {"site_id": 1, "serial_number": SN}
+    full = {**base, **WIN, "resolution": "HOUR"}
+    full_params = [*RANGE, ("resolution", "HOUR")]
+    if unit is not None:
+        full["unit"] = unit
+        full_params.append(("unit", unit))
+    path = f"/sites/1/{family}/{SN}/{metric}"
+    return [
+        (method, base, "GET", path, []),
+        (method, full, "GET", path, full_params),
+    ]
+
+
+# (method, kwargs, HTTP method, path under /v2, query params in order).
+# Together these cover every operation in SolarEdge's Basic Monitoring API
+# 2.1.0 (50) and Advanced Monitoring API 2.0.1 (6) specifications.
+ENDPOINTS: list[tuple[str, dict[str, Any], str, str, Params]] = [
+    # --- sites
+    ("get_sites", {}, "GET", "/sites", []),
     (
-        "get_site_list",
-        {},
-        "/sites/list",
+        "get_sites",
         {
-            "size": "100",
-            "startIndex": "0",
-            "sortOrder": "ASC",
-            "status": "Active,Pending",
+            "page": 2,
+            "sites_in_page": 1000,
+            "name": "farm",
+            "group": "g-1",
+            "state": "CA",
+            "city": "Fresno",
         },
+        "GET",
+        "/sites",
+        [
+            ("page", "2"),
+            ("sites-in-page", "1000"),
+            ("name", "farm"),
+            ("group", "g-1"),
+            ("state", "CA"),
+            ("city", "Fresno"),
+        ],
     ),
+    ("get_site_details", {"site_id": 1}, "GET", "/sites/1", []),
+    ("get_site_details", {"site_id": "42"}, "GET", "/sites/42", []),
+    ("get_overview", {"site_id": 1}, "GET", "/sites/1/overview", []),
+    ("get_overview", {"site_id": 1, **WIN}, "GET", "/sites/1/overview", RANGE),
     (
-        "get_site_list",
-        {"search_text": "farm", "sort_property": "Name", "status": "All"},
-        "/sites/list",
-        {
-            "size": "100",
-            "startIndex": "0",
-            "sortOrder": "ASC",
-            "status": "All",
-            "searchText": "farm",
-            "sortProperty": "Name",
-        },
+        "get_overview",
+        {"site_id": 1, "start": START},
+        "GET",
+        "/sites/1/overview",
+        [("from", FROM)],
     ),
-    ("get_site_details", {"site_id": 1}, "/site/1/details", {}),
-    ("get_site_data", {"site_ids": [1, 2]}, "/site/1,2/dataPeriod", {}),
+    ("get_performance", {"site_id": 1}, "GET", "/sites/1/overview/performance", []),
     (
-        "get_energy",
-        {"site_ids": [1, 2], "start_date": START, "end_date": END},
-        "/site/1,2/energy",
-        {"startDate": DATE_START, "endDate": DATE_END, "timeUnit": "DAY"},
+        "get_performance",
+        {"site_id": 1, **WIN},
+        "GET",
+        "/sites/1/overview/performance",
+        RANGE,
     ),
-    (
-        "get_time_frame_energy",
-        {"site_ids": [1], "start_date": START, "end_date": END},
-        "/site/1/timeFrameEnergy",
-        {"startDate": DATE_START, "endDate": DATE_END, "timeUnit": "DAY"},
-    ),
+    ("get_power", {"site_id": 1}, "GET", "/sites/1/power", []),
     (
         "get_power",
-        {"site_id": 1, "start_time": START, "end_time": END},
-        "/site/1/power",
-        {"startTime": TIME_START, "endTime": TIME_END},
+        {"site_id": 1, **WIN, "resolution": "HOUR", "unit": "KW"},
+        "GET",
+        "/sites/1/power",
+        [*RANGE, ("resolution", "HOUR"), ("unit", "KW")],
     ),
-    ("get_overview", {"site_ids": [1, 2]}, "/site/1,2/overview", {}),
+    ("get_energy", {"site_id": 1}, "GET", "/sites/1/energy", []),
     (
-        "get_power_details",
-        {"site_id": 1, "start_time": START, "end_time": END},
-        "/site/1/powerDetails",
-        {"startTime": TIME_START, "endTime": TIME_END},
-    ),
-    (
-        "get_power_details",
-        {
-            "site_id": 1,
-            "start_time": START,
-            "end_time": END,
-            "meters": ["Production", "Consumption"],
-        },
-        "/site/1/powerDetails",
-        {
-            "startTime": TIME_START,
-            "endTime": TIME_END,
-            "meters": "Production,Consumption",
-        },
-    ),
-    (
-        "get_energy_details",
-        {"site_id": 1, "start_time": START, "end_time": END},
-        "/site/1/energyDetails",
-        {"startTime": TIME_START, "endTime": TIME_END, "timeUnit": "DAY"},
-    ),
-    ("get_current_power_flow", {"site_id": 1}, "/site/1/currentPowerFlow", {}),
-    (
-        "get_storage_data",
-        {"site_id": 1, "start_time": START, "end_time": END},
-        "/site/1/storageData",
-        {"startTime": TIME_START, "endTime": TIME_END},
-    ),
-    (
-        "get_storage_data",
-        {"site_id": 1, "start_time": START, "end_time": END, "serials": ["A", "B"]},
-        "/site/1/storageData",
-        {"startTime": TIME_START, "endTime": TIME_END, "serials": "A,B"},
+        "get_energy",
+        {"site_id": 1, **WIN, "resolution": "TOTAL", "unit": "KWH"},
+        "GET",
+        "/sites/1/energy",
+        [*RANGE, ("resolution", "TOTAL"), ("unit", "KWH")],
     ),
     (
         "get_environmental_benefits",
         {"site_id": 1},
-        "/site/1/envBenefits",
-        {},
+        "GET",
+        "/sites/1/environmental-benefits",
+        [],
     ),
     (
         "get_environmental_benefits",
-        {"site_id": 1, "system_units": "Imperial"},
-        "/site/1/envBenefits",
-        {"systemUnits": "Imperial"},
+        {"site_id": 1, "unit": "IMPERIAL"},
+        "GET",
+        "/sites/1/environmental-benefits",
+        [("unit", "IMPERIAL")],
     ),
-    ("get_components_list", {"site_id": 1}, "/equipment/1/list", {}),
-    ("get_inventory", {"site_id": 1}, "/site/1/inventory", {}),
+    ("get_lifetime_energy", {"site_id": 1}, "GET", "/sites/1/lifetime-energy", []),
     (
-        "get_inverter_technical_data",
-        {"site_id": 1, "serial_number": "SN1", "start_time": START, "end_time": END},
-        "/site/1/inverter/SN1/data",
-        {"startTime": TIME_START, "endTime": TIME_END},
+        "get_external_production_energy",
+        {"site_id": 1},
+        "GET",
+        "/sites/1/external-production-energy",
+        [],
+    ),
+    # --- alerts
+    ("get_alerts", {}, "GET", "/alerts", []),
+    (
+        "get_alerts",
+        {
+            "page": 3,
+            "alerts_in_page": 100,
+            "group": "g-1",
+            "alert_type": "COMMUNICATION",
+            "state": "CA",
+            "city": "Fresno",
+            "only_open": False,
+        },
+        "GET",
+        "/alerts",
+        [
+            ("page", "3"),
+            ("alerts-in-page", "100"),
+            ("group", "g-1"),
+            ("type", "COMMUNICATION"),
+            ("state", "CA"),
+            ("city", "Fresno"),
+            ("only-open", "false"),
+        ],
+    ),
+    ("get_site_alerts", {"site_id": 1}, "GET", "/sites/1/alerts", []),
+    (
+        "get_site_alerts",
+        {"site_id": 1, "page": 1, "alerts_in_page": 10, "only_open": True},
+        "GET",
+        "/sites/1/alerts",
+        [("page", "1"), ("alerts-in-page", "10"), ("only-open", "true")],
+    ),
+    # --- inventory
+    ("get_devices", {"site_id": 1}, "GET", "/sites/1/devices", []),
+    (
+        "get_devices",
+        {"site_id": 1, "types": ["INVERTER", "BATTERY"]},
+        "GET",
+        "/sites/1/devices",
+        [("types", "INVERTER"), ("types", "BATTERY")],
     ),
     (
-        "get_meters",
-        {"site_id": 1, "start_time": START, "end_time": END},
-        "/site/1/meters",
-        {"startTime": TIME_START, "endTime": TIME_END, "timeUnit": "DAY"},
+        "get_devices",
+        {"site_id": 1, "types": "METER"},
+        "GET",
+        "/sites/1/devices",
+        [("types", "METER")],
+    ),
+    (
+        "get_device",
+        {"site_id": 1, "serial_number": SN},
+        "GET",
+        f"/sites/1/devices/{SN}",
+        [],
+    ),
+    # --- bulk telemetry, site-wide and per device
+    (
+        "get_inverters_telemetry",
+        {"site_id": 1},
+        "GET",
+        "/sites/1/inverters/telemetry",
+        [],
+    ),
+    (
+        "get_inverters_telemetry",
+        {"site_id": 1, **WIN, "resolution": "DAY", "serial_numbers": [SN, "B-2"]},
+        "GET",
+        f"/sites/1/inverters/{SN},B-2/telemetry",
+        [*RANGE, ("resolution", "DAY")],
+    ),
+    ("get_meters_telemetry", {"site_id": 1}, "GET", "/sites/1/meters/telemetry", []),
+    (
+        "get_meters_telemetry",
+        {"site_id": 1, "serial_numbers": [SN]},
+        "GET",
+        f"/sites/1/meters/{SN}/telemetry",
+        [],
+    ),
+    ("get_storage_telemetry", {"site_id": 1}, "GET", "/sites/1/storage/telemetry", []),
+    (
+        "get_storage_telemetry",
+        {"site_id": 1, **WIN, "serial_numbers": SN},
+        "GET",
+        f"/sites/1/storage/{SN}/telemetry",
+        RANGE,
+    ),
+    # --- status
+    ("get_inverters_status", {"site_id": 1}, "GET", "/sites/1/inverters/status", []),
+    (
+        "get_inverters_status",
+        {"site_id": 1, **WIN, "resolution": "HOUR", "serial_numbers": [SN]},
+        "GET",
+        f"/sites/1/inverters/{SN}/status",
+        [*RANGE, ("resolution", "HOUR")],
+    ),
+    ("get_storage_status", {"site_id": 1}, "GET", "/sites/1/storage/status", []),
+    (
+        "get_storage_status",
+        {"site_id": 1, "serial_numbers": [SN]},
+        "GET",
+        f"/sites/1/storage/{SN}/status",
+        [],
+    ),
+    # --- lifetime energy counters
+    (
+        "get_inverters_lifetime_energy",
+        {"site_id": 1, **WIN},
+        "GET",
+        "/sites/1/inverters/lifetime-energy",
+        RANGE,
+    ),
+    (
+        "get_inverters_lifetime_energy",
+        {"site_id": 1, **WIN, "serial_number": SN},
+        "GET",
+        f"/sites/1/inverters/{SN}/lifetime-energy",
+        RANGE,
+    ),
+    (
+        "get_meters_lifetime_energy",
+        {"site_id": 1, **WIN},
+        "GET",
+        "/sites/1/meters/lifetime-energy",
+        RANGE,
+    ),
+    (
+        "get_meters_lifetime_energy",
+        {
+            "site_id": 1,
+            **WIN,
+            "serial_numbers": [SN],
+            "meters": ["PRODUCTION", "PURCHASED"],
+        },
+        "GET",
+        f"/sites/1/meters/{SN}/lifetime-energy",
+        [*RANGE, ("meters", "PRODUCTION,PURCHASED")],
+    ),
+    (
+        "get_storage_lifetime_energy",
+        {"site_id": 1, **WIN},
+        "GET",
+        "/sites/1/storage/lifetime-energy",
+        RANGE,
+    ),
+    (
+        "get_storage_lifetime_energy",
+        {"site_id": 1, **WIN, "serial_numbers": [SN]},
+        "GET",
+        f"/sites/1/storage/{SN}/lifetime-energy",
+        RANGE,
+    ),
+    # --- per-device measurements
+    *_measurement("get_inverter_power", "inverters", "power", "KW"),
+    *_measurement("get_inverter_energy", "inverters", "energy", "KWH"),
+    *_measurement(
+        "get_inverter_consumed_ac_power", "inverters", "consumed-ac-power", "W"
+    ),
+    *_measurement(
+        "get_inverter_consumed_ac_energy", "inverters", "consumed-ac-energy", "WH"
+    ),
+    *_measurement("get_inverter_voltage", "inverters", "voltage", None),
+    *_measurement("get_inverter_current", "inverters", "current", None),
+    *_measurement("get_inverter_frequency", "inverters", "frequency", None),
+    *_measurement("get_meter_production_power", "meters", "production-power", "W"),
+    *_measurement("get_meter_production_energy", "meters", "production-energy", "WH"),
+    *_measurement("get_meter_consumption_power", "meters", "consumption-power", "W"),
+    *_measurement("get_meter_consumption_energy", "meters", "consumption-energy", "WH"),
+    *_measurement("get_meter_import_power", "meters", "import-power", "W"),
+    *_measurement("get_meter_import_energy", "meters", "import-energy", "WH"),
+    *_measurement("get_meter_export_power", "meters", "export-power", "W"),
+    *_measurement("get_meter_export_energy", "meters", "export-energy", "WH"),
+    *_measurement("get_battery_charge_power", "storage", "charge-power", "W"),
+    *_measurement("get_battery_discharge_power", "storage", "discharge-power", "W"),
+    *_measurement("get_battery_charge_energy", "storage", "charge-energy", "WH"),
+    *_measurement("get_battery_discharge_energy", "storage", "discharge-energy", "WH"),
+    *_measurement(
+        "get_battery_state_of_energy", "storage", "state-of-energy", "PERCENTAGE"
+    ),
+    *_measurement("get_battery_remaining_energy", "storage", "remaining-energy", "WH"),
+    # --- Advanced Monitoring
+    (
+        "get_power_per_destination",
+        {"site_id": 1},
+        "GET",
+        "/sites/1/power/per-destination",
+        [],
+    ),
+    (
+        "get_power_per_destination",
+        {"site_id": 1, **WIN, "resolution": "HOUR"},
+        "GET",
+        "/sites/1/power/per-destination",
+        [*RANGE, ("resolution", "HOUR")],
+    ),
+    (
+        "get_energy_per_destination",
+        {"site_id": 1, **WIN, "resolution": "MONTH"},
+        "GET",
+        "/sites/1/energy/per-destination",
+        [*RANGE, ("resolution", "MONTH")],
+    ),
+    ("get_current_power_flow", {"site_id": 1}, "GET", "/sites/1/power-flow", []),
+    ("start_live_power_flow", {"site_id": 1}, "POST", "/sites/1/power-flow", []),
+    ("get_weather_guard", {"site_id": 1}, "GET", "/sites/1/weather-guard", []),
+    ("get_backup_reserve", {"site_id": 1}, "GET", "/sites/1/backup-reserve", []),
+    # --- escape hatch
+    ("get", {"path": "sites/1/alerts"}, "GET", "/sites/1/alerts", []),
+    (
+        "get",
+        {"path": "/sites/1/alerts/", "params": {"from": START, "status": None}},
+        "GET",
+        "/sites/1/alerts",
+        [("from", FROM)],
+    ),
+    (
+        "get",
+        {"path": "sites/1/devices", "params": {"types": ["METER", "GATEWAY"]}},
+        "GET",
+        "/sites/1/devices",
+        [("types", "METER"), ("types", "GATEWAY")],
     ),
 ]
 
 IDS = [f"{name}-{i}" for i, (name, *_) in enumerate(ENDPOINTS)]
+
+# One (HTTP method, path template) per operation in the two specifications.
+SPEC_OPERATIONS = {
+    ("GET", "/sites"),
+    ("GET", "/sites/{id}"),
+    ("GET", "/sites/{id}/overview"),
+    ("GET", "/sites/{id}/overview/performance"),
+    ("GET", "/sites/{id}/power"),
+    ("GET", "/sites/{id}/energy"),
+    ("GET", "/sites/{id}/environmental-benefits"),
+    ("GET", "/sites/{id}/lifetime-energy"),
+    ("GET", "/sites/{id}/external-production-energy"),
+    ("GET", "/alerts"),
+    ("GET", "/sites/{id}/alerts"),
+    ("GET", "/sites/{id}/devices"),
+    ("GET", "/sites/{id}/devices/{sn}"),
+    *(
+        ("GET", f"/sites/{{id}}/{family}{sn}/{kind}")
+        for family in ("inverters", "meters", "storage")
+        for kind in ("telemetry", "lifetime-energy")
+        for sn in ("", "/{sn}")
+    ),
+    *(
+        ("GET", f"/sites/{{id}}/{family}{sn}/status")
+        for family in ("inverters", "storage")
+        for sn in ("", "/{sn}")
+    ),
+    *(
+        ("GET", f"/sites/{{id}}/inverters/{{sn}}/{metric}")
+        for metric in (
+            "power",
+            "energy",
+            "consumed-ac-power",
+            "consumed-ac-energy",
+            "voltage",
+            "current",
+            "frequency",
+        )
+    ),
+    *(
+        ("GET", f"/sites/{{id}}/meters/{{sn}}/{direction}-{kind}")
+        for direction in ("production", "consumption", "import", "export")
+        for kind in ("power", "energy")
+    ),
+    *(
+        ("GET", f"/sites/{{id}}/storage/{{sn}}/{metric}")
+        for metric in (
+            "charge-power",
+            "discharge-power",
+            "charge-energy",
+            "discharge-energy",
+            "state-of-energy",
+            "remaining-energy",
+        )
+    ),
+    ("GET", "/sites/{id}/power/per-destination"),
+    ("GET", "/sites/{id}/energy/per-destination"),
+    ("GET", "/sites/{id}/power-flow"),
+    ("POST", "/sites/{id}/power-flow"),
+    ("GET", "/sites/{id}/weather-guard"),
+    ("GET", "/sites/{id}/backup-reserve"),
+}
+
+
+def _template(path: str) -> str:
+    """Turn a concrete test path back into its spec template."""
+    parts = path.split("/")
+    if len(parts) > 2 and parts[1] == "sites":
+        parts[2] = "{id}"
+    if len(parts) > 4 and parts[3] in ("inverters", "meters", "storage", "devices"):
+        if parts[4] not in ("telemetry", "status", "lifetime-energy"):
+            parts[4] = "{sn}"
+    return "/".join(parts)
 
 
 def _recording_transport(
@@ -178,17 +463,21 @@ def _async_client(requests: list[httpx.Request], content: bytes | None = None):
 
 
 def _assert_request(
-    request: httpx.Request, expected_path: str, expected_params: dict[str, str]
+    request: httpx.Request,
+    expected_method: str,
+    expected_path: str,
+    expected_params: Params,
 ) -> None:
-    """Assert URL, params and the absence of empty query values."""
-    assert request.url.path == expected_path
-    assert request.url.params["api_key"] == API_KEY
+    """Assert method, host, path, auth header and params."""
+    assert request.method == expected_method
+    assert request.url.host == "monitoringapi.solaredge.com"
+    assert request.url.path == BASE_PATH + expected_path
+    assert request.headers["X-API-Key"] == API_KEY
+    assert list(request.url.params.multi_items()) == expected_params
 
-    actual = {k: v for k, v in request.url.params.items() if k != "api_key"}
-    assert actual == expected_params
-
-    # Unset optional params must be omitted, not sent as `key=`.
-    assert not [k for k, v in request.url.params.items() if v == ""]
+    # The key must never travel in the URL, as V1's api_key param did.
+    assert API_KEY not in str(request.url)
+    assert "api_key" not in request.url.params
 
 
 class TestClientLifecycle:
@@ -198,6 +487,17 @@ class TestClientLifecycle:
         """Client can be instantiated and closed."""
         client = MonitoringClient(api_key=API_KEY)
         assert client is not None
+        client.close()
+
+    def test_empty_api_key_rejected(self):
+        """A missing key fails locally instead of as a 401 later."""
+        with pytest.raises(SolarEdgeValidationError, match="api_key is required"):
+            MonitoringClient(api_key="")
+
+    def test_repr_hides_api_key(self):
+        """Logging a client must not leak the key."""
+        client = MonitoringClient(api_key="SECRET")
+        assert "SECRET" not in repr(client)
         client.close()
 
     def test_context_manager_closes_owned_client(self):
@@ -222,6 +522,12 @@ class TestClientLifecycle:
         assert not external.is_closed
         external.close()
 
+    def test_timeout_is_applied(self):
+        """The timeout reaches the internally-created httpx client."""
+        client = MonitoringClient(api_key=API_KEY, timeout=3)
+        assert client.client.timeout.read == 3
+        client.close()
+
     def test_base_url_override_and_trailing_slash(self):
         """A custom base_url is used, with any trailing slash stripped."""
         requests: list[httpx.Request] = []
@@ -231,9 +537,7 @@ class TestClientLifecycle:
             client=httpx.Client(transport=_recording_transport(requests)),
         )
         client.get_site_details(site_id=1)
-        assert str(requests[0].url).startswith(
-            "https://example.test/api/site/1/details"
-        )
+        assert str(requests[0].url) == "https://example.test/api/sites/1"
 
     async def test_async_context_manager_closes_owned_client(self):
         """The async client closes an httpx.AsyncClient it created."""
@@ -251,31 +555,55 @@ class TestClientLifecycle:
 
 
 class TestEndpoints:
-    """Every endpoint builds the URL and query string the API expects."""
+    """Every operation builds the request the specification describes."""
 
-    @pytest.mark.parametrize(("name", "kwargs", "path", "params"), ENDPOINTS, ids=IDS)
-    def test_sync_request(self, name, kwargs, path, params):
-        """The sync client requests the expected URL with the expected params."""
+    @pytest.mark.parametrize(
+        ("name", "kwargs", "method", "path", "params"), ENDPOINTS, ids=IDS
+    )
+    def test_sync_request(self, name, kwargs, method, path, params):
+        """The sync client sends the expected method, URL and params."""
         requests: list[httpx.Request] = []
         client = _sync_client(requests)
         result = getattr(client, name)(**kwargs)
 
         assert len(requests) == 1
-        _assert_request(requests[0], path, params)
+        _assert_request(requests[0], method, path, params)
         assert result == {"ok": True}
 
-    @pytest.mark.parametrize(("name", "kwargs", "path", "params"), ENDPOINTS, ids=IDS)
-    async def test_async_request(self, name, kwargs, path, params):
+    @pytest.mark.parametrize(
+        ("name", "kwargs", "method", "path", "params"), ENDPOINTS, ids=IDS
+    )
+    async def test_async_request(self, name, kwargs, method, path, params):
         """The async client mirrors the sync client exactly."""
         requests: list[httpx.Request] = []
         client = _async_client(requests)
         result = await getattr(client, name)(**kwargs)
 
         assert len(requests) == 1
-        _assert_request(requests[0], path, params)
+        _assert_request(requests[0], method, path, params)
         assert result == {"ok": True}
 
-    def test_sync_and_async_expose_the_same_endpoints(self):
+    def test_every_spec_operation_is_covered(self):
+        """Each of the 56 documented operations has a tested method."""
+        assert len(SPEC_OPERATIONS) == 56
+        tested = {
+            (method, _template(path))
+            for name, _, method, path, _ in ENDPOINTS
+            if name != "get"
+        }
+        assert tested == SPEC_OPERATIONS
+
+    def test_every_public_method_is_tested(self):
+        """No operation method exists without a request test."""
+        public = {
+            n
+            for n in dir(MonitoringClient)
+            if n.startswith(("get", "start_"))
+            and callable(getattr(MonitoringClient, n))
+        }
+        assert public == {name for name, *_ in ENDPOINTS}
+
+    def test_sync_and_async_expose_the_same_methods(self):
         """The two clients must not drift apart in API surface."""
         public = lambda c: {  # noqa: E731
             n for n in dir(c) if not n.startswith("_") and callable(getattr(c, n))
@@ -287,81 +615,175 @@ class TestEndpoints:
         assert not sync_only
         assert not async_only
 
+    def test_non_utc_datetimes_are_sent_as_utc(self):
+        """Offsets are normalised to a UTC instant with a Z suffix."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        cet = timezone(timedelta(hours=1))
+        client.get_energy(
+            site_id=1,
+            start=datetime(2026, 1, 1, 1, 0, tzinfo=cet),
+            end=datetime(2026, 1, 2, 1, 0, tzinfo=cet),
+        )
+        assert requests[0].url.params["from"] == FROM
+        assert requests[0].url.params["to"] == TO
 
-class TestTimeframeValidation:
-    """Timeframe limits produce readable errors."""
+    def test_microseconds_are_dropped(self):
+        """Timestamps are sent at second precision."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        client.get_power(
+            site_id=1,
+            start=datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=UTC),
+            end=END,
+        )
+        assert requests[0].url.params["from"] == FROM
 
-    def test_end_before_start(self):
-        """An inverted range is rejected."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(ValueError, match=r"End date must be after start date\."):
-            client._validate_timeframe("DAY", END, START)
+    def test_empty_success_body_returns_none(self):
+        """A 200 with no body (e.g. starting live power flow) is not an error."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests, content=b"")
+        assert client.start_live_power_flow(site_id=1) is None
 
     @pytest.mark.parametrize(
-        ("time_unit", "end", "expected"),
+        "removed",
         [
+            "get_site_list",
+            "get_site_data",
+            "get_time_frame_energy",
+            "get_power_details",
+            "get_energy_details",
+            "get_storage_data",
+            "get_components_list",
+            "get_inventory",
+            "get_inverter_technical_data",
+            "get_meters",
+        ],
+    )
+    def test_v1_only_methods_are_gone(self, removed):
+        """V1 methods with no V2 equivalent fail loudly, not with a 410."""
+        assert not hasattr(MonitoringClient, removed)
+        assert not hasattr(AsyncMonitoringClient, removed)
+
+
+class TestValidation:
+    """Arguments are checked locally, before anything is sent."""
+
+    def test_validation_error_is_still_a_value_error(self):
+        """Existing `except ValueError` handlers keep working."""
+        assert issubclass(SolarEdgeValidationError, ValueError)
+
+    @pytest.mark.parametrize(
+        ("method", "kwargs"),
+        [
+            ("get_energy", {"start": datetime(2026, 1, 1)}),
+            ("get_power", {"end": datetime(2026, 1, 2)}),
+            ("get_overview", {"start": datetime(2026, 1, 1)}),
+            ("get_storage_telemetry", {"start": datetime(2026, 1, 1)}),
             (
-                "_ONE_WEEK_MAX",
-                datetime(2024, 2, 1),
-                "The maximum date range is 1 week (7 days).",
-            ),
-            (
-                "HOUR",
-                datetime(2024, 3, 1),
-                "For time_unit HOUR, the maximum date range is 1 month (31 days).",
-            ),
-            (
-                "QUARTER_OF_AN_HOUR",
-                datetime(2024, 3, 1),
-                "For time_unit QUARTER_OF_AN_HOUR, "
-                "the maximum date range is 1 month (31 days).",
-            ),
-            (
-                "DAY",
-                datetime(2026, 1, 1),
-                "For time_unit DAY, the maximum date range is 1 year (365 days).",
+                "get_storage_lifetime_energy",
+                {"start": datetime(2026, 1, 1), "end": END},
             ),
         ],
     )
-    def test_range_limits(self, time_unit, end, expected):
-        """Exceeding a limit raises ValueError with a plain-string message."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(ValueError) as excinfo:
-            client._validate_timeframe(time_unit, START, end)
-
-        # A tuple-wrapped message would render as "('...', '...')".
-        assert str(excinfo.value) == expected
-
-    def test_endpoint_propagates_validation_error(self):
-        """Validation runs before any request is made."""
+    def test_naive_datetime_rejected(self, method, kwargs):
+        """V2 rejects timestamps without an offset, so refuse them up front."""
         requests: list[httpx.Request] = []
         client = _sync_client(requests)
-        with pytest.raises(ValueError):
-            client.get_storage_data(
-                site_id=1, start_time=START, end_time=datetime(2024, 2, 1)
-            )
+        with pytest.raises(SolarEdgeValidationError, match="timezone-aware"):
+            getattr(client, method)(site_id=1, **kwargs)
         assert requests == []
 
+    def test_naive_datetime_rejected_in_generic_get(self):
+        """get() applies the same timestamp rule as the dedicated methods."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        with pytest.raises(SolarEdgeValidationError, match="from must be"):
+            client.get("sites/1/alerts", {"from": datetime(2026, 1, 1)})
+        assert requests == []
 
-class TestSiteLimits:
-    """Documented request-size limits."""
+    def test_inverted_range_rejected(self):
+        """End before start is caught locally."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        with pytest.raises(SolarEdgeValidationError, match="end must not be before"):
+            client.get_energy(site_id=1, start=END, end=START)
+        assert requests == []
 
-    def test_site_data_rejects_more_than_100_sites(self):
-        """get_site_data enforces the 100-site cap."""
+    @pytest.mark.parametrize(
+        "method",
+        [
+            "get_inverters_lifetime_energy",
+            "get_meters_lifetime_energy",
+            "get_storage_lifetime_energy",
+        ],
+    )
+    def test_lifetime_energy_requires_window(self, method):
+        """The spec marks from/to as required on the lifetime-energy endpoints."""
         client = MonitoringClient(API_KEY)
-        with pytest.raises(ValueError, match="more than 100 sites"):
-            client.get_site_data(site_ids=list(range(101)))
+        with pytest.raises(SolarEdgeValidationError, match="both required"):
+            getattr(client, method)(site_id=1, start=START, end=None)
+
+    @pytest.mark.parametrize("site_id", ["1/../2", "abc", "", "-1", "\uff11", True])
+    def test_malformed_site_id_rejected(self, site_id):
+        """A site ID must not be able to change the request path."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        with pytest.raises(SolarEdgeValidationError, match="site_id"):
+            client.get_site_details(site_id=site_id)
+        assert requests == []
+
+    @pytest.mark.parametrize("serial", ["", "..", "a/b", "a,b", "a?b", "-x", "\u00e9"])
+    def test_malformed_serial_rejected(self, serial):
+        """A serial number must not be able to change the request path."""
+        requests: list[httpx.Request] = []
+        client = _sync_client(requests)
+        with pytest.raises(SolarEdgeValidationError, match="serial numbers"):
+            client.get_device(site_id=1, serial_number=serial)
+        assert requests == []
+
+    def test_empty_serial_list_rejected(self):
+        """An empty list would silently select every device instead."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="must not be empty"):
+            client.get_meters_telemetry(site_id=1, serial_numbers=[])
+
+    @pytest.mark.parametrize(
+        ("method", "kwargs", "match"),
+        [
+            ("get_sites", {"sites_in_page": 1001}, "sites_in_page"),
+            ("get_sites", {"page": 0}, "page"),
+            ("get_alerts", {"alerts_in_page": 101}, "alerts_in_page"),
+            ("get_site_alerts", {"site_id": 1, "alerts_in_page": 0}, "alerts_in_page"),
+        ],
+    )
+    def test_page_bounds_enforced(self, method, kwargs, match):
+        """Paging arguments outside the documented bounds are refused."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match=match):
+            getattr(client, method)(**kwargs)
+
+    @pytest.mark.parametrize("path", ["", "/", "sites/../oauth2/token"])
+    def test_generic_get_rejects_bad_paths(self, path):
+        """get() refuses empty paths and parent-directory segments."""
+        client = MonitoringClient(API_KEY)
+        with pytest.raises(SolarEdgeValidationError, match="Invalid API path"):
+            client.get(path)
 
 
 class TestErrorTranslation:
     """API failures surface as library-owned exceptions, never httpx ones."""
 
     @staticmethod
-    def _client_returning(status: int, body=None, text: str | None = None):
+    def _client_returning(
+        status: int, body=None, text: str | None = None, headers=None
+    ):
         def handler(request: httpx.Request) -> httpx.Response:
             if text is not None:
-                return httpx.Response(status, text=text)
-            return httpx.Response(status, json=body if body is not None else {})
+                return httpx.Response(status, text=text, headers=headers)
+            return httpx.Response(
+                status, json=body if body is not None else {}, headers=headers
+            )
 
         return MonitoringClient(
             "SECRET", client=httpx.Client(transport=httpx.MockTransport(handler))
@@ -374,6 +796,7 @@ class TestErrorTranslation:
             (401, SolarEdgeAuthError),
             (403, SolarEdgeAuthError),
             (404, SolarEdgeNotFoundError),
+            (410, SolarEdgeAPIError),
             (429, SolarEdgeRateLimitError),
             (500, SolarEdgeServerError),
             (503, SolarEdgeServerError),
@@ -381,28 +804,50 @@ class TestErrorTranslation:
     )
     def test_status_maps_to_exception_type(self, status, expected):
         """Each error status raises its most specific exception class."""
-        client = self._client_returning(status, {"String": "nope"})
+        client = self._client_returning(status, {"title": "nope"})
         with pytest.raises(expected) as excinfo:
             client.get_site_details(site_id=1)
 
         assert excinfo.value.status_code == status
-        assert excinfo.value.response_body == {"String": "nope"}
+        assert excinfo.value.response_body == {"title": "nope"}
 
-    def test_every_api_error_is_a_solaredge_error(self):
-        """Callers can catch the base class alone."""
-        client = self._client_returning(500)
-        with pytest.raises(SolarEdgeAPIError):
+    def test_rate_limit_exposes_retry_after_and_limits(self):
+        """Callers can see how long to wait and what quota is left."""
+        client = self._client_returning(
+            429,
+            {},
+            headers={
+                "Retry-After": "42",
+                "x-ratelimit-limit-minute": "10",
+                "x-ratelimit-remaining-minute": "0",
+                "x-ratelimit-remaining-month": "not-a-number",
+            },
+        )
+        with pytest.raises(SolarEdgeRateLimitError) as excinfo:
             client.get_site_details(site_id=1)
+        assert excinfo.value.retry_after == "42"
+        assert excinfo.value.limits == {
+            "x-ratelimit-limit-minute": 10,
+            "x-ratelimit-remaining-minute": 0,
+        }
 
-    def test_api_key_is_redacted_from_the_message(self):
+    def test_rate_limit_without_headers(self):
+        """retry_after is None and limits empty when the headers are absent."""
+        client = self._client_returning(429, {})
+        with pytest.raises(SolarEdgeRateLimitError) as excinfo:
+            client.get_site_details(site_id=1)
+        assert excinfo.value.retry_after is None
+        assert excinfo.value.limits == {}
+
+    def test_api_key_never_appears_in_errors(self):
         """A traceback must never expose a live API key."""
-        client = self._client_returning(403, {"String": "Invalid token"})
+        client = self._client_returning(403, {"title": "Forbidden"})
         with pytest.raises(SolarEdgeAuthError) as excinfo:
             client.get_site_details(site_id=1)
 
         assert "SECRET" not in str(excinfo.value)
         assert "SECRET" not in (excinfo.value.url or "")
-        assert "api_key=REDACTED" in str(excinfo.value)
+        assert excinfo.value.url == "https://monitoringapi.solaredge.com/v2/sites/1"
 
     def test_httpx_error_is_preserved_as_cause(self):
         """The transport-level error stays reachable for callers who want it."""
@@ -424,7 +869,9 @@ class TestErrorTranslation:
         """The async client raises the same types as the sync client."""
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(429, json={"String": "slow down"})
+            return httpx.Response(
+                429, json={"title": "slow down"}, headers={"Retry-After": "7"}
+            )
 
         client = AsyncMonitoringClient(
             "SECRET",
@@ -433,67 +880,4 @@ class TestErrorTranslation:
         with pytest.raises(SolarEdgeRateLimitError) as excinfo:
             await client.get_site_details(site_id=1)
         assert excinfo.value.status_code == 429
-
-
-class TestValidation:
-    """Argument limits are enforced locally and consistently."""
-
-    def test_validation_error_is_still_a_value_error(self):
-        """Existing `except ValueError` handlers keep working."""
-        assert issubclass(SolarEdgeValidationError, ValueError)
-
-    @pytest.mark.parametrize(
-        "method",
-        ["get_site_data", "get_overview"],
-    )
-    def test_empty_site_ids_rejected(self, method):
-        """An empty list would build a malformed `site//...` path."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(SolarEdgeValidationError, match="At least one site ID"):
-            getattr(client, method)(site_ids=[])
-
-    @pytest.mark.parametrize(
-        "method",
-        ["get_site_data", "get_overview"],
-    )
-    def test_site_cap_enforced_consistently(self, method):
-        """Every site_ids endpoint enforces the cap, not just get_site_data."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(SolarEdgeValidationError, match="more than 100"):
-            getattr(client, method)(site_ids=list(range(101)))
-
-    def test_energy_enforces_site_cap(self):
-        """The cap applies to the dated endpoints as well."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(SolarEdgeValidationError, match="more than 100"):
-            client.get_energy(site_ids=list(range(101)), start_date=START, end_date=END)
-
-    def test_site_list_size_validated(self):
-        """get_site_list documented a max of 100 but never enforced it."""
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(SolarEdgeValidationError, match="size cannot exceed"):
-            client.get_site_list(size=500)
-
-    def test_partial_day_over_limit_is_rejected(self):
-        """A 7.5-day range exceeds the one-week ceiling.
-
-        The previous whole-day truncation let this through.
-        """
-        client = MonitoringClient(API_KEY)
-        with pytest.raises(SolarEdgeValidationError, match="1 week"):
-            client.get_storage_data(
-                site_id=1,
-                start_time=datetime(2024, 1, 1),
-                end_time=datetime(2024, 1, 8, 12),
-            )
-
-    def test_exactly_at_limit_is_allowed(self):
-        """The boundary itself stays valid."""
-        requests: list[httpx.Request] = []
-        client = _sync_client(requests)
-        client.get_storage_data(
-            site_id=1,
-            start_time=datetime(2024, 1, 1),
-            end_time=datetime(2024, 1, 8),
-        )
-        assert len(requests) == 1
+        assert excinfo.value.retry_after == "7"

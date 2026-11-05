@@ -8,9 +8,10 @@ authors = [{ name = "evworth", email = "elliotworth@protonmail.com"}]
 license = {text = "MIT"}
 name = "solaredge"
 version = "2.0.0"
-description = "A Python client library for the SolarEdge Monitoring API"
+description = "Sync and async Python client for the SolarEdge Monitoring API (V2)"
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["solaredge", "solar", "monitoring", "inverter", "api", "httpx"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -23,10 +24,18 @@ classifiers = [
     "Programming Language :: Python :: 3.12", 
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
 ]
 dependencies = [
     "httpx>=0.28.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/EVWorth/solaredge"
+Issues = "https://github.com/EVWorth/solaredge/issues"
+Changelog = "https://github.com/EVWorth/solaredge/blob/main/CHANGELOG.md"
+"SolarEdge API docs" = "https://api-docs.solaredge.com/"
 
 [dependency-groups]
 dev = [
@@ -38,6 +47,7 @@ validate = ["ruff"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.uv]
 required-version = ">=0.8.0"

@@ -23,21 +23,6 @@ __all__ = [
     "SolarEdgeValidationError",
 ]
 
-_REDACTED = "REDACTED"
-
-
-def redact_url(url: httpx.URL | str) -> str:
-    """Return `url` with the api_key query value replaced.
-
-    SolarEdge authenticates by query parameter, so the key appears in every
-    request URL. Error messages are routinely pasted into bug reports, so the
-    key is masked anywhere this library renders a URL.
-    """
-    url = httpx.URL(url)
-    if "api_key" in url.params:
-        url = url.copy_set_param("api_key", _REDACTED)
-    return str(url)
-
 
 class SolarEdgeError(Exception):
     """Base class for every error raised by this library."""
@@ -58,7 +43,8 @@ class SolarEdgeAPIError(SolarEdgeError):
         status_code: HTTP status code returned by the API.
         response_body: Parsed JSON body if the response carried one, else the
             decoded text, else None.
-        url: The requested URL, with the api_key value redacted.
+        url: The requested URL. The API key travels in a header, so it never
+            appears here.
     """
 
     def __init__(
@@ -76,7 +62,11 @@ class SolarEdgeAPIError(SolarEdgeError):
 
 
 class SolarEdgeAuthError(SolarEdgeAPIError):
-    """The API key was missing, invalid, or not permitted (401, 403)."""
+    """The API key was rejected, or the request is not permitted (401, 403).
+
+    V2 also returns 403 for endpoints the account's plan does not include,
+    such as power flow on the free tier.
+    """
 
 
 class SolarEdgeNotFoundError(SolarEdgeAPIError):
@@ -84,7 +74,32 @@ class SolarEdgeNotFoundError(SolarEdgeAPIError):
 
 
 class SolarEdgeRateLimitError(SolarEdgeAPIError):
-    """The account's request quota or concurrency limit was exceeded (429)."""
+    """The per-minute or monthly credit quota was exceeded (429).
+
+    No automatic retry is attempted.
+
+    Attributes:
+        retry_after: The ``Retry-After`` header value if the API sent one,
+            else None. The API omits it when the monthly quota runs out.
+        limits: The ``x-ratelimit-*`` headers the API sent, as integers, e.g.
+            ``{"x-ratelimit-remaining-minute": 0}``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        response_body: Any = None,
+        url: str | None = None,
+        retry_after: str | None = None,
+        limits: dict[str, int] | None = None,
+    ) -> None:
+        super().__init__(
+            message, status_code=status_code, response_body=response_body, url=url
+        )
+        self.retry_after = retry_after
+        self.limits = limits or {}
 
 
 class SolarEdgeServerError(SolarEdgeAPIError):
@@ -106,15 +121,27 @@ def _response_body(response: httpx.Response) -> Any:
             return None
 
 
+def _rate_limit_headers(headers: httpx.Headers) -> dict[str, int]:
+    """Collect the documented ``x-ratelimit-*`` headers that parse as integers."""
+    return {
+        name.lower(): int(value)
+        for name, value in headers.items()
+        if name.lower().startswith("x-ratelimit-") and value.strip().isdecimal()
+    }
+
+
 def error_from_response(response: httpx.Response) -> SolarEdgeAPIError:
     """Build the most specific SolarEdgeAPIError for an error response."""
     status = response.status_code
     body = _response_body(response)
-    url = redact_url(response.request.url) if response.request is not None else None
+    url = str(response.request.url) if response.request is not None else None
 
     if status in (401, 403):
         cls: type[SolarEdgeAPIError] = SolarEdgeAuthError
-        summary = "Authentication failed; check the API key"
+        summary = (
+            "Authentication failed or not permitted; check the API key and "
+            "that your plan includes this endpoint"
+        )
     elif status == 404:
         cls = SolarEdgeNotFoundError
         summary = "The requested resource was not found"
@@ -134,4 +161,13 @@ def error_from_response(response: httpx.Response) -> SolarEdgeAPIError:
     if body:
         message = f"{message}: {body}"
 
+    if cls is SolarEdgeRateLimitError:
+        return SolarEdgeRateLimitError(
+            message,
+            status_code=status,
+            response_body=body,
+            url=url,
+            retry_after=response.headers.get("Retry-After"),
+            limits=_rate_limit_headers(response.headers),
+        )
     return cls(message, status_code=status, response_body=body, url=url)
