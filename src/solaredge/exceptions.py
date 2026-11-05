@@ -74,11 +74,15 @@ class SolarEdgeNotFoundError(SolarEdgeAPIError):
 
 
 class SolarEdgeRateLimitError(SolarEdgeAPIError):
-    """The per-minute or monthly request quota was exceeded (429).
+    """The per-minute or monthly credit quota was exceeded (429).
+
+    No automatic retry is attempted.
 
     Attributes:
         retry_after: The ``Retry-After`` header value if the API sent one,
-            else None. No automatic retry is attempted.
+            else None. The API omits it when the monthly quota runs out.
+        limits: The ``x-ratelimit-*`` headers the API sent, as integers, e.g.
+            ``{"x-ratelimit-remaining-minute": 0}``.
     """
 
     def __init__(
@@ -89,11 +93,13 @@ class SolarEdgeRateLimitError(SolarEdgeAPIError):
         response_body: Any = None,
         url: str | None = None,
         retry_after: str | None = None,
+        limits: dict[str, int] | None = None,
     ) -> None:
         super().__init__(
             message, status_code=status_code, response_body=response_body, url=url
         )
         self.retry_after = retry_after
+        self.limits = limits or {}
 
 
 class SolarEdgeServerError(SolarEdgeAPIError):
@@ -113,6 +119,15 @@ def _response_body(response: httpx.Response) -> Any:
             return response.text or None
         except UnicodeDecodeError:
             return None
+
+
+def _rate_limit_headers(headers: httpx.Headers) -> dict[str, int]:
+    """Collect the documented ``x-ratelimit-*`` headers that parse as integers."""
+    return {
+        name.lower(): int(value)
+        for name, value in headers.items()
+        if name.lower().startswith("x-ratelimit-") and value.strip().isdecimal()
+    }
 
 
 def error_from_response(response: httpx.Response) -> SolarEdgeAPIError:
@@ -153,5 +168,6 @@ def error_from_response(response: httpx.Response) -> SolarEdgeAPIError:
             response_body=body,
             url=url,
             retry_after=response.headers.get("Retry-After"),
+            limits=_rate_limit_headers(response.headers),
         )
     return cls(message, status_code=status, response_body=body, url=url)

@@ -1,5 +1,15 @@
-"""Library to interact with SolarEdge's monitoring API."""
+"""Sync and async clients for SolarEdge's Monitoring API (V2)."""
 
+from ._endpoints import (
+    MeterType,
+    PowerUnit,
+    DeviceType,
+    EnergyUnit,
+    Resolution,
+    SystemUnits,
+    PercentageUnit,
+    PowerResolution,
+)
 from .exceptions import (
     SolarEdgeError,
     SolarEdgeAPIError,
@@ -14,7 +24,14 @@ from .monitoring import MonitoringClient, AsyncMonitoringClient
 
 __all__ = [
     "AsyncMonitoringClient",
+    "DeviceType",
+    "EnergyUnit",
+    "MeterType",
     "MonitoringClient",
+    "PercentageUnit",
+    "PowerResolution",
+    "PowerUnit",
+    "Resolution",
     "SolarEdgeAPIError",
     "SolarEdgeAuthError",
     "SolarEdgeError",
@@ -23,4 +40,5 @@ __all__ = [
     "SolarEdgeResponseError",
     "SolarEdgeServerError",
     "SolarEdgeValidationError",
+    "SystemUnits",
 ]
