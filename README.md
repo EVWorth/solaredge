@@ -50,8 +50,10 @@ A Python client for the SolarEdge Monitoring API (V2), with synchronous and asyn
 - **Sync & Async Support**: `MonitoringClient` and `AsyncMonitoringClient` share
   one definition of every method, so they cannot drift apart
 - **Typed**: full annotations, `py.typed`, and `Literal` types for every enumerated parameter
-- **Safe by default**: arguments are validated before anything is sent, and the
-  API key never appears in URLs or error messages
+- **OAuth built in**: Site Access tokens are refreshed automatically, with a
+  `python -m solaredge login` helper for homeowners
+- **Safe by default**: arguments are validated before anything is sent, and
+  credentials never appear in URLs, reprs or error messages
 
 ## Installation
 
@@ -63,14 +65,85 @@ uv add solaredge
 
 ## Credentials
 
-V1 API keys do not work with V2. Create an account on the
-[SolarEdge Developer Platform](https://developer.solaredge.com/) and generate
-an **API key** there. This client sends it in the `X-API-Key` header, which
-every V2 operation accepts.
+V1 API keys do not work with V2. Which V2 credential you need depends on who
+you are:
 
-V2 also supports **OAuth 2.0** (Site Access), which lets an app act on behalf
-of a system owner. That isn't supported here yet. If you need it, please
-comment on [#122](https://github.com/EVWorth/solaredge/issues/122).
+| You are | Access type | Pass to the client |
+| --- | --- | --- |
+| A **homeowner** reading your own system | Site Access (OAuth 2.0) | `oauth=OAuth2(...)`, or `access_token="..."` |
+| An **installer** with a fleet of sites | Fleet Access (API key) | `api_key="..."` |
+
+SolarEdge only offers Fleet Access keys to installer accounts, so homeowners
+use OAuth. See SolarEdge's
+[Homeowner and Self-Access Guide](https://api-docs.solaredge.com/docs/developer-platform/df8kx5j4z9vi0-homeowner-and-self-access-guide).
+
+### Homeowners: Site Access (OAuth)
+
+1. **Create a developer account:** sign in to the
+   [Developer Platform](https://developer.solaredge.com/) with your
+   mySolarEdge login and fill in the developer profile. The Free tier is enough.
+2. **Create a Site Access application:**
+   - Service: Monitoring API.
+   - Redirect URI: `http://localhost:8080/oauth/callback`.
+   - Scopes: `SITE_DATA` and `DEVICE_DATA`.
+   - Copy the client secret: it is shown only once.
+3. **Authorize the app for your site** with the bundled helper. It opens the
+   consent page, catches the redirect and saves the token to a file only you
+   can read:
+
+   ```bash
+   export SOLAREDGE_CLIENT_SECRET=...   # or omit it to be prompted
+   python -m solaredge login --client-id YOUR_CLIENT_ID
+   # Saved the token for site 1234567 to solaredge-token.json (mode 600).
+   ```
+
+4. **Use the token.** Access tokens last 2 hours; `OAuth2` refreshes them
+   automatically. Each refresh also **replaces the refresh token**, so save
+   every new token in `on_token_update`, or the next run will hold a dead one.
+   A refresh token unused for 14 days expires, and you have to run
+   `login` again.
+
+```python
+import json
+from pathlib import Path
+
+from solaredge import MonitoringClient, OAuth2, OAuthToken
+
+TOKEN_FILE = Path("solaredge-token.json")
+
+
+def save(token: OAuthToken) -> None:
+    TOKEN_FILE.write_text(json.dumps(token.to_dict()))
+
+
+auth = OAuth2(
+    OAuthToken.from_dict(json.loads(TOKEN_FILE.read_text())),
+    client_id="YOUR_CLIENT_ID",
+    client_secret="YOUR_CLIENT_SECRET",
+    on_token_update=save,
+)
+
+with MonitoringClient(oauth=auth) as client:
+    overview = client.get_overview(auth.token.site_id)
+```
+
+`OAuth2` works with both clients. With `AsyncMonitoringClient`,
+`on_token_update` may be an `async` function. Concurrent requests share a single
+refresh, so they never spend the same refresh token twice.
+
+If you already manage tokens yourself, for example through Home Assistant's
+OAuth helper, pass the current one with `MonitoringClient(access_token="...")`.
+
+Building an app for *other* homeowners? `solaredge.oauth` has the pieces:
+`authorization_url`, `parse_callback`, `exchange_code`, `refresh_token`,
+`revoke_token`, and their `async_` variants.
+
+### Installers: Fleet Access (API key)
+
+Create a Fleet Access application on the Developer Platform and pass its key:
+`MonitoringClient("YOUR_API_KEY")`. It is sent in the `X-API-Key` header, and
+it is the only credential accepted by `get_sites` and `get_alerts`, which list
+data across a fleet.
 
 ## Quick Start
 
@@ -79,6 +152,10 @@ rejects timestamps without an offset, so a naive `datetime` raises
 `SolarEdgeValidationError` before any request is sent. Where `start`/`end` are
 optional, leaving them out means "midnight today until now" in the site's
 time zone.
+
+The examples below use `auth`, the `OAuth2` object from
+[Credentials](#homeowners-site-access-oauth). With a Fleet Access key, pass
+`api_key="..."` instead.
 
 ### Synchronous Usage
 
@@ -90,7 +167,7 @@ from solaredge import MonitoringClient
 SITE_ID = 1234567
 now = datetime.now(timezone.utc)
 
-with MonitoringClient("YOUR_API_KEY") as client:
+with MonitoringClient(oauth=auth) as client:
     details = client.get_site_details(SITE_ID)
     today = client.get_overview(SITE_ID)
     daily = client.get_energy(
@@ -114,7 +191,7 @@ from solaredge import AsyncMonitoringClient
 
 async def main():
     now = datetime.now(timezone.utc)
-    async with AsyncMonitoringClient("YOUR_API_KEY") as client:
+    async with AsyncMonitoringClient(oauth=auth) as client:
         details, power = await asyncio.gather(
             client.get_site_details(1234567),
             client.get_power(1234567, start=now - timedelta(hours=2), end=now),
@@ -171,7 +248,7 @@ with MonitoringClient("YOUR_API_KEY") as client:
     try:
         flow = client.get_current_power_flow(1234567)
     except SolarEdgeAuthError:
-        ...  # bad key, or an operation your plan does not include
+        ...  # bad credentials, or an operation your plan does not include
     except SolarEdgeRateLimitError as exc:
         ...  # exc.retry_after, exc.limits
     except SolarEdgeError:
@@ -185,7 +262,8 @@ The hierarchy:
 | `SolarEdgeError` | Base class for everything below |
 | `SolarEdgeValidationError` | Arguments rejected locally, before any request. Also a `ValueError` |
 | `SolarEdgeAPIError` | The API returned an error status, e.g. 400 for a window that is too long |
-| `SolarEdgeAuthError` | 401 / 403: key missing or invalid, or the operation is not in your plan |
+| `SolarEdgeAuthError` | 401 / 403: credentials invalid or expired, missing scope, or the operation is not in your plan |
+| `SolarEdgeOAuthError` | The token endpoint rejected a code or refresh token. Carries `error` and `error_description`; an expired grant means running `login` again |
 | `SolarEdgeNotFoundError` | 404: no such site, device or operation |
 | `SolarEdgeRateLimitError` | 429: per-minute or monthly quota exceeded. Carries `retry_after` and `limits` (the `x-ratelimit-*` headers) |
 | `SolarEdgeServerError` | 5xx: the API failed to handle a valid request |
@@ -229,7 +307,8 @@ run through the Free tier's monthly quota. To stay within it:
 
 Other changes:
 
-- **Credentials:** pass a V2 API key; V1 keys are rejected.
+- **Credentials:** V1 keys are rejected. Homeowners use Site Access (OAuth);
+  installers use a V2 Fleet Access API key. See [Credentials](#credentials).
 - **One site per call:** V2 has no comma-separated bulk form for sites.
 - **Datetimes must be timezone-aware**, and are sent as UTC `from`/`to`.
 - **Parameters renamed:** `time_unit` is now `resolution`, and

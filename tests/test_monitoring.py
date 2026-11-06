@@ -491,7 +491,7 @@ class TestClientLifecycle:
 
     def test_empty_api_key_rejected(self):
         """A missing key fails locally instead of as a 401 later."""
-        with pytest.raises(SolarEdgeValidationError, match="api_key is required"):
+        with pytest.raises(SolarEdgeValidationError, match="exactly one of"):
             MonitoringClient(api_key="")
 
     def test_repr_hides_api_key(self):

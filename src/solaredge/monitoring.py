@@ -13,6 +13,7 @@ from collections.abc import Awaitable
 
 import httpx
 
+from .oauth import OAuth2
 from ._endpoints import Request
 from .exceptions import (
     SolarEdgeResponseError,
@@ -34,14 +35,28 @@ class BaseMonitoringClient:
     depends on whether I/O is blocking.
     """
 
-    def __init__(self, api_key: str, base_url: str | None = None):
-        if not api_key:
-            raise SolarEdgeValidationError("api_key is required.")
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        *,
+        access_token: str | None = None,
+        oauth: OAuth2 | None = None,
+    ):
+        given = [x for x in (api_key, access_token, oauth) if x]
+        if len(given) != 1:
+            raise SolarEdgeValidationError(
+                "Pass exactly one of api_key (Fleet Access), access_token or "
+                "oauth (Site Access)."
+            )
         self.api_key = api_key
+        if access_token:
+            oauth = OAuth2(access_token)
+        self.oauth = oauth
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
 
     def __repr__(self) -> str:
-        """Describe the client without exposing the API key."""
+        """Describe the client without exposing credentials."""
         return f"{type(self).__name__}(base_url={self.base_url!r})"
 
     def _url(self, path: str) -> str:
@@ -57,8 +72,16 @@ class BaseMonitoringClient:
             "method": request.method,
             "url": self._url(request.path),
             "params": [(k, v) for k, v in (request.params or []) if v is not None],
-            "headers": {API_KEY_HEADER: self.api_key, "Accept": "application/json"},
+            "headers": self._headers(),
+            # Site Access: the OAuth2 auth adds the bearer token and refreshes it.
+            "auth": self.oauth,
         }
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers[API_KEY_HEADER] = self.api_key
+        return headers
 
     @staticmethod
     def _parse_response(response: httpx.Response) -> Any:
@@ -87,8 +110,15 @@ class BaseMonitoringClient:
 class AsyncMonitoringClient(BaseMonitoringClient, Operations[Awaitable[Any]]):
     """Asynchronous client for the SolarEdge Monitoring API (V2).
 
-    Authenticates with an API key from the SolarEdge developer portal, sent in
-    the ``X-API-Key`` header. Limits itself to 3 concurrent requests.
+    Authenticate with exactly one of:
+
+    - ``api_key``: a Fleet Access key (installers), sent as ``X-API-Key``.
+    - ``access_token``: a Site Access bearer token you obtain and refresh
+      yourself.
+    - ``oauth``: a :class:`solaredge.oauth.OAuth2`, which refreshes the Site
+      Access token automatically. This is the route for homeowners.
+
+    Limits itself to 3 concurrent requests.
 
     Usage:
         async with AsyncMonitoringClient(api_key) as client:
@@ -97,12 +127,20 @@ class AsyncMonitoringClient(BaseMonitoringClient, Operations[Awaitable[Any]]):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         client: httpx.AsyncClient | None = None,
         timeout: float | None = DEFAULT_TIMEOUT,
         base_url: str | None = None,
+        *,
+        access_token: str | None = None,
+        oauth: OAuth2 | None = None,
     ) -> None:
-        super().__init__(api_key=api_key, base_url=base_url)
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            access_token=access_token,
+            oauth=oauth,
+        )
         self._external_client = client is not None
         self.client = client or httpx.AsyncClient(
             timeout=DEFAULT_TIMEOUT if timeout is None else timeout
@@ -145,12 +183,20 @@ class MonitoringClient(BaseMonitoringClient, Operations[Any]):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         client: httpx.Client | None = None,
         timeout: float | None = DEFAULT_TIMEOUT,
         base_url: str | None = None,
+        *,
+        access_token: str | None = None,
+        oauth: OAuth2 | None = None,
     ) -> None:
-        super().__init__(api_key=api_key, base_url=base_url)
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            access_token=access_token,
+            oauth=oauth,
+        )
         self._external_client = client is not None
         self.client = client or httpx.Client(
             timeout=DEFAULT_TIMEOUT if timeout is None else timeout
