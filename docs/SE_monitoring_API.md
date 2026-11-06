@@ -10,14 +10,39 @@ Monitoring API V1 was retired on 2026-11-03.
 ## Base URL and authentication
 
 - **Base URL:** `https://monitoringapi.solaredge.com/v2`
-- **API key:**
-  - Sent in the `X-API-Key` header.
-  - Comes from the [developer portal](https://developer.solaredge.com/).
-  - Every operation accepts it, and this client uses it.
-- **OAuth 2.0:**
-  - Bearer token, authorization code flow.
+- **Fleet Access (installers):**
+  - API key in the `X-API-Key` header.
+  - Accepted by every operation.
+  - Only offered to installer accounts.
+- **Site Access (homeowners and third-party apps):**
+  - OAuth 2.0 authorization code, sent as `Authorization: Bearer <token>`.
   - Accepted by every operation except `GET /sites` and `GET /alerts`.
-  - Not yet supported here; see [#122](https://github.com/EVWorth/solaredge/issues/122).
+  - Scopes: `SITE_DATA` (site-level data) and `DEVICE_DATA` (device data).
+
+### OAuth endpoints
+
+| Step | Request |
+| --- | --- |
+| Consent | Browser to `https://connect.solaredge.com/authorize?client_id=...&scope=SITE_DATA%20DEVICE_DATA&redirect_uri=...&access_duration=24` |
+| Callback | Redirect URI receives `code`, `site_id` (and `state`, `external_id` if sent) |
+| Token | `POST /v2/oauth2/token`, JSON `{grant_type: "authorization_code", code, client_id, client_secret}` |
+| Refresh | `POST /v2/oauth2/token`, JSON `{grant_type: "refresh_token", refresh_token, client_id, client_secret}` |
+| Revoke | `POST /v2/oauth2/revoke-token`, JSON `{token}` |
+
+Token lifetimes:
+
+- **Access tokens:** last 2 hours (`expires_in: 7200`).
+- **Refresh tokens:** rotate on every refresh, and the old one becomes
+  invalid. One unused for 14 days expires.
+- **Grants:** last up to `access_duration` months (24 maximum).
+
+Token-endpoint errors follow RFC 6749 (`400` with `error` and
+`error_description`).
+
+This library wraps all of it in `solaredge.oauth`:
+
+- `OAuth2` refreshes tokens automatically.
+- `python -m solaredge login` runs the consent flow.
 
 ## Conventions
 
