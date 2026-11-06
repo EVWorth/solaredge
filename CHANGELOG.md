@@ -1,3 +1,9 @@
+## 3.1.0 (2026-11-06)
+
+### Feat
+
+- Site Access (OAuth 2.0) support for homeowners (#125)
+
 ## 3.0.0 (2026-11-05)
 
 ### BREAKING CHANGE
