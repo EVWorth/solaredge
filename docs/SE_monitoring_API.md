@@ -42,7 +42,7 @@ Token-endpoint errors follow RFC 6749 (`400` with `error` and
 This library wraps all of it in `solaredge.oauth`:
 
 - `OAuth2` refreshes tokens automatically.
-- `python -m solaredge login` runs the consent flow.
+- `uv run python -m solaredge login` runs the consent flow.
 
 ## Conventions
 

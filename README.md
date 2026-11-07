@@ -51,15 +51,13 @@ A Python client for the SolarEdge Monitoring API (V2), with synchronous and asyn
   one definition of every method, so they cannot drift apart
 - **Typed**: full annotations, `py.typed`, and `Literal` types for every enumerated parameter
 - **OAuth built in**: Site Access tokens are refreshed automatically, with a
-  `python -m solaredge login` helper for homeowners
+  `uv run python -m solaredge login` helper for homeowners
 - **Safe by default**: arguments are validated before anything is sent, and
   credentials never appear in URLs, reprs or error messages
 
 ## Installation
 
 ```bash
-pip install solaredge
-poetry add solaredge
 uv add solaredge
 ```
 
@@ -93,7 +91,7 @@ use OAuth. See SolarEdge's
 
    ```bash
    export SOLAREDGE_CLIENT_SECRET=...   # or omit it to be prompted
-   python -m solaredge login --client-id YOUR_CLIENT_ID
+   uv run python -m solaredge login --client-id YOUR_CLIENT_ID
    # Saved the token for site 1234567 to solaredge-token.json (mode 600).
    ```
 

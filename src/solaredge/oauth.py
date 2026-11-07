@@ -14,7 +14,7 @@ Connect. This module covers the whole flow:
 Refresh tokens rotate on every use and the old one stops working, so always
 store the newest token. A refresh token expires after 14 days without use.
 
-Run ``python -m solaredge login --help`` for an interactive helper that
+Run ``uv run python -m solaredge login --help`` for an interactive helper that
 performs steps 1-3 and writes the token to a file.
 
 See https://api-docs.solaredge.com/docs/developer-platform/g09jmvp5t2cok-authentication
