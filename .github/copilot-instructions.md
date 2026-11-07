@@ -20,3 +20,5 @@ V1 parameter names such as `startTime` or `timeUnit`.
   - Datetimes must be timezone-aware and are sent as UTC (`...Z`).
 - **Errors:** raise `SolarEdgeError` subclasses, never `httpx` exceptions.
 - **Endpoint reference:** see `docs/SE_monitoring_API.md`.
+- **Tooling:** the project uses uv only. Docs and examples use `uv add` and
+  `uv run`, never pip or poetry.
