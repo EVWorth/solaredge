@@ -1,3 +1,9 @@
+## 3.3.0 (2026-11-08)
+
+### Feat
+
+- EV charger and sensor telemetry (Basic Monitoring API 2.2.0) (#137)
+
 ## 3.2.0 (2026-11-08)
 
 ### Feat
