@@ -339,9 +339,17 @@ commitizen reads the conventional commits since the last tag:
 - `docs:`, `ci:`, `test:`, `chore:` and the like don't release anything.
 
 When there's something to release, CI commits the version bump and CHANGELOG
-to `main`, creates the tag and GitHub release, and publishes to PyPI. Nobody
-tags or publishes by hand, and commit types decide the version, so use them
-deliberately.
+to `main`, creates the tag and GitHub release, and publishes to PyPI.
+
+- **The PR title decides the release.** PRs are squash-merged, so the title
+  becomes the commit commitizen reads. Give it the right type, and mark breaking
+  changes with `!` (e.g. `feat!: ...`) or a `BREAKING CHANGE:` footer in the
+  squash message.
+- **Don't bump or tag by hand.** No local `cz bump`, no bump PRs, no manual
+  tags or GitHub releases. CI picks the version.
+- **If a release fails partway**, e.g. PyPI was down after the tag was
+  created, use **Re-run failed jobs** on that run. **Re-run all jobs** sees the
+  tag already exists and skips publishing.
 
 ## API Documentation
 
