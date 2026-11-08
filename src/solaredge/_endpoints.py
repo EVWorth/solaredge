@@ -6,7 +6,7 @@ happens in this module, so the synchronous and asynchronous clients share a
 single definition of each operation.
 
 Paths are relative to ``https://monitoringapi.solaredge.com/v2`` and follow
-SolarEdge's Basic Monitoring API 2.1.0 and Advanced Monitoring API 2.0.1
+SolarEdge's Basic Monitoring API 2.2.0 and Advanced Monitoring API 2.0.1
 specifications.
 """
 
@@ -24,6 +24,7 @@ from .exceptions import SolarEdgeValidationError
 # unchanged, so a value SolarEdge adds later still works.
 Resolution = Literal["QUARTER_HOUR", "HOUR", "DAY", "WEEK", "MONTH", "YEAR", "TOTAL"]
 PowerResolution = Literal["QUARTER_HOUR", "HOUR"]
+SensorResolution = Literal["QUARTER_HOUR", "HOUR", "DAY", "WEEK", "MONTH"]
 EnergyUnit = Literal["WH", "KWH", "MWH"]
 PowerUnit = Literal["W", "KW", "MW"]
 PercentageUnit = Literal["PERCENTAGE", "PERCENTAGE_100"]
@@ -37,6 +38,7 @@ DeviceType = Literal[
     "EV_CHARGER",
     "BUI",
     "GATEWAY",
+    "SENSOR",
 ]
 MeterType = Literal[
     "PRODUCTION", "CONSUMPTION", "FEEDIN", "PURCHASED", "EXPORT", "IMPORT"
@@ -319,7 +321,7 @@ def device(site_id: int | str, serial_number: str) -> Request:
 
 def family_series(
     site_id: int | str,
-    family: DeviceFamily,
+    family: DeviceFamily | Literal["ev-chargers"],
     kind: Literal["telemetry", "status"],
     serial_numbers: Iterable[str] | None,
     start: datetime | None,
@@ -358,6 +360,22 @@ def family_lifetime_energy(
             *_required_window(start, end),
             ("meters", ",".join(directions) if directions else None),
         ],
+    )
+
+
+def sensor_telemetry(
+    site_id: int | str,
+    start: datetime | None,
+    end: datetime | None,
+    resolution: str | None,
+) -> Request:
+    """``GET /sites/{id}/sensors/telemetry``.
+
+    Sensors have no serial number, so there is no per-device variant.
+    """
+    return _get(
+        _path("sites", _site(site_id), "sensors", "telemetry"),
+        [*_window(start, end), ("resolution", resolution)],
     )
 
 

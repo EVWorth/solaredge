@@ -1,8 +1,8 @@
 # SolarEdge Monitoring API V2 reference
 
-This client covers all 56 operations in SolarEdge's published specifications:
+This client covers all 59 operations in SolarEdge's published specifications:
 
-- [Basic Monitoring API](https://api-docs.solaredge.com/docs/basic-monitoring-api) 2.1.0: 50 operations, available on every plan.
+- [Basic Monitoring API](https://api-docs.solaredge.com/docs/basic-monitoring-api) 2.2.0: 53 operations, available on every plan.
 - [Advanced Monitoring API](https://api-docs.solaredge.com/docs/advanced-monitoring) 2.0.1: 6 operations, Business Pro and Enterprise plans only. Other plans get `403`.
 
 Monitoring API V1 was retired on 2026-11-03.
@@ -104,7 +104,7 @@ Paths are relative to the base URL. `{id}` is the site ID.
 | `get_device` | `GET /sites/{id}/devices/{sn}` | |
 
 Device types: `INVERTER`, `BATTERY`, `BATTERY_MODULE`, `OPTIMIZER`, `METER`,
-`EV_CHARGER`, `BUI`, `GATEWAY`.
+`EV_CHARGER`, `BUI`, `GATEWAY`, `SENSOR`.
 
 ### Telemetry, status and lifetime energy
 
@@ -113,6 +113,8 @@ Device types: `INVERTER`, `BATTERY`, `BATTERY_MODULE`, `OPTIMIZER`, `METER`,
 | `get_inverters_telemetry` | `GET /sites/{id}/inverters[/{sn}]/telemetry` | `from`, `to`, `resolution` |
 | `get_meters_telemetry` | `GET /sites/{id}/meters[/{sn}]/telemetry` | `from`, `to`, `resolution` |
 | `get_storage_telemetry` | `GET /sites/{id}/storage[/{sn}]/telemetry` | `from`, `to`, `resolution` |
+| `get_ev_chargers_telemetry` | `GET /sites/{id}/ev-chargers[/{sn}]/telemetry` | `from`, `to`, `resolution` |
+| `get_sensors_telemetry` | `GET /sites/{id}/sensors/telemetry` | `from`, `to`, `resolution` (up to `MONTH`) |
 | `get_inverters_status` | `GET /sites/{id}/inverters[/{sn}]/status` | `from`, `to`, `resolution` (`QUARTER_HOUR`/`HOUR`) |
 | `get_storage_status` | `GET /sites/{id}/storage[/{sn}]/status` | `from`, `to`, `resolution` (`QUARTER_HOUR`) |
 | `get_inverters_lifetime_energy` | `GET /sites/{id}/inverters[/{sn}]/lifetime-energy` | `from`*, `to`* |
@@ -131,7 +133,12 @@ Metrics at coarser resolutions:
   at `QUARTER_HOUR` and `HOUR` only.
 - **Storage telemetry:** power and state of energy are available at
   `QUARTER_HOUR` and `HOUR` only.
+- **EV charger telemetry:** charging power is available at `QUARTER_HOUR`
+  and `HOUR` only.
 - **Coarser resolutions:** return energy metrics only.
+- **Sensor telemetry:** irradiance, temperature and wind readings, keyed by
+  sensor `id` (sensors have no serial number). `DAY`, `WEEK` and `MONTH`
+  allow up to 1 month.
 
 ### Single-device measurements
 
