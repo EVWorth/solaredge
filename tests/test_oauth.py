@@ -3,8 +3,10 @@
 import os
 import json
 import time
+import socket
 import asyncio
 import threading
+import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
@@ -19,6 +21,7 @@ from solaredge import (
     SolarEdgeOAuthError,
     SolarEdgeServerError,
     AsyncMonitoringClient,
+    SolarEdgeResponseError,
     SolarEdgeValidationError,
     oauth,
 )
@@ -213,6 +216,7 @@ class TestTokenEndpoint:
         assert token.access_token == "access-1"
         assert token.refresh_token == "refresh-1"
         assert token.site_id == 42
+        assert token.expires_at is not None
         assert before + 7200 <= token.expires_at <= time.time() + 7200
 
     def test_refresh_token(self):
@@ -616,3 +620,306 @@ class TestLoginCommand:
         monkeypatch.delenv("SOLAREDGE_CLIENT_ID", raising=False)
         assert cli.main(["login", "--no-browser"]) == 2
         assert "client-id" in capsys.readouterr().err
+
+
+class TestEdgeCases:
+    """Paths the main flows above do not reach."""
+
+    def test_refresh_without_new_refresh_token_keeps_the_old_one(self):
+        """If the API omits refresh_token on refresh, the current one is kept."""
+
+        def handler(request):
+            if str(request.url) == TOKEN_URL:
+                return httpx.Response(
+                    200, json={"access_token": "access-2", "expires_in": 7200}
+                )
+            return httpx.Response(200, json={"ok": True})
+
+        auth = _auth(_token(1, expires_in=0))
+        client = MonitoringClient(
+            oauth=auth, client=httpx.Client(transport=httpx.MockTransport(handler))
+        )
+        client.get_site_details(42)
+        assert auth.token.access_token == "access-2"
+        assert auth.token.refresh_token == "refresh-1"
+        assert auth.token.site_id == 42
+
+    def test_non_json_token_response(self):
+        """A 200 that is not JSON is a response error, not a crash."""
+
+        def handler(request):
+            return httpx.Response(200, text="<html>maintenance</html>")
+
+        with (
+            httpx.Client(transport=httpx.MockTransport(handler)) as http,
+            pytest.raises(SolarEdgeResponseError, match="non-JSON"),
+        ):
+            oauth.exchange_code("cid", "cs", "code", client=http)
+
+    @pytest.mark.parametrize("body", [[], {"token_type": "Bearer"}])
+    def test_token_response_without_access_token(self, body):
+        """A body without access_token is rejected."""
+        with pytest.raises(SolarEdgeResponseError, match="no access_token"):
+            OAuthToken.from_response(body)
+
+    def test_token_response_without_expiry(self):
+        """No expires_in means the token never counts as expired locally."""
+        token = OAuthToken.from_response({"access_token": "a"})
+        assert token.expires_at is None
+        assert not token.is_expired()
+
+    def test_from_dict_requires_access_token(self):
+        """A stored file without an access token is refused."""
+        with pytest.raises(SolarEdgeValidationError, match="no access_token"):
+            OAuthToken.from_dict({"refresh_token": "r"})
+
+    @pytest.mark.parametrize(
+        ("call", "match"),
+        [
+            (lambda: oauth.exchange_code("", "cs", "code"), "code are required"),
+            (
+                lambda: oauth.refresh_token("cid", "", "rt"),
+                "refresh token are required",
+            ),
+            (lambda: OAuth2(""), "access token is required"),
+        ],
+    )
+    def test_missing_arguments_rejected(self, call, match):
+        """Missing credentials fail locally, before any request."""
+        with pytest.raises(SolarEdgeValidationError, match=match):
+            call()
+
+    def test_sync_revoke_error(self):
+        """The sync revoke raises on an OAuth error, like the async one."""
+
+        def handler(request):
+            return httpx.Response(400, json={"error": "invalid_token"})
+
+        with (
+            httpx.Client(transport=httpx.MockTransport(handler)) as http,
+            pytest.raises(SolarEdgeOAuthError),
+        ):
+            oauth.revoke_token("t", client=http)
+
+    async def test_async_revoke_success(self):
+        """A successful async revoke returns quietly."""
+
+        def handler(request):
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            assert await oauth.async_revoke_token("t", client=http) is None
+
+    def test_owned_http_clients_are_created_and_closed(self, monkeypatch):
+        """Without a client argument, a short-lived one is made and closed."""
+        made: list = []
+
+        def handler(request):
+            return httpx.Response(200, json=_token_body(1))
+
+        real_sync, real_async = httpx.Client, httpx.AsyncClient
+
+        def sync_factory(**kw):
+            made.append(real_sync(transport=httpx.MockTransport(handler)))
+            return made[-1]
+
+        def async_factory(**kw):
+            made.append(real_async(transport=httpx.MockTransport(handler)))
+            return made[-1]
+
+        monkeypatch.setattr(oauth.httpx, "Client", sync_factory)
+        monkeypatch.setattr(oauth.httpx, "AsyncClient", async_factory)
+
+        assert oauth.exchange_code("cid", "cs", "code").access_token == "access-1"
+        assert (
+            asyncio.run(oauth.async_exchange_code("cid", "cs", "code")).access_token
+            == "access-1"
+        )
+        assert [c.is_closed for c in made] == [True, True]
+
+    async def test_async_client_accepts_a_sync_callback(self):
+        """on_token_update may be a plain function with the async client too."""
+        fake = FakeSolarEdge(current=1)
+        saved: list[OAuthToken] = []
+        async with AsyncMonitoringClient(
+            oauth=_auth(_token(1, expires_in=0), saved),
+            client=httpx.AsyncClient(transport=fake.async_transport()),
+        ) as client:
+            await client.get_site_details(42)
+        assert [t.access_token for t in saved] == ["access-2"]
+
+    def test_sync_threads_on_401_refresh_once(self):
+        """Threads hitting a 401 on the same stale token refresh only once."""
+        fake = FakeSolarEdge(current=2)
+        token = OAuthToken("access-1", "refresh-2", time.time() + 7200)
+        client = MonitoringClient(
+            oauth=_auth(token), client=httpx.Client(transport=fake.transport())
+        )
+        barrier = threading.Barrier(4)
+        results: list = []
+
+        def call(i):
+            barrier.wait()
+            results.append(client.get_site_details(i))
+
+        threads = [threading.Thread(target=call, args=(i,)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert results == [{"ok": True}] * 4
+        assert fake.refreshes == 1
+
+
+class TestLoginEdgeCases:
+    """Login helper paths not covered above."""
+
+    def test_capture_redirect_port_in_use(self):
+        """A port that cannot be bound falls back to pasting the URL."""
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            sock.listen()
+            port = sock.getsockname()[1]
+            assert cli.capture_redirect(f"http://127.0.0.1:{port}/cb", 1) is None
+
+    def test_login_opens_browser_and_uses_captured_redirect(
+        self, tmp_path, monkeypatch
+    ):
+        """The default path opens the browser and needs no pasting."""
+        opened: list[str] = []
+        monkeypatch.setenv("SOLAREDGE_CLIENT_SECRET", "cs")
+        monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+        monkeypatch.setattr(cli.secrets, "token_urlsafe", lambda n: "st")
+        monkeypatch.setattr(
+            cli,
+            "capture_redirect",
+            lambda uri, timeout: "/cb?code=c&site_id=5&state=st",
+        )
+
+        def no_input(prompt):  # pragma: no cover - must not be called
+            raise AssertionError("asked to paste despite a captured redirect")
+
+        monkeypatch.setattr("builtins.input", no_input)
+        monkeypatch.setattr(
+            cli,
+            "exchange_code",
+            lambda *a, **kw: OAuthToken("a", "r", site_id=kw["site_id"]),
+        )
+
+        out = tmp_path / "t.json"
+        assert cli.main(["login", "--client-id", "cid", "--output", str(out)]) == 0
+        assert len(opened) == 1 and opened[0].startswith(oauth.AUTHORIZE_URL)
+        assert json.loads(out.read_text())["site_id"] == 5
+
+
+class _HookLock:
+    """A lock that runs a hook on acquire, to replay a race deterministically.
+
+    The hook stands in for another thread or task that refreshed the token
+    while this one waited for the lock.
+    """
+
+    def __init__(self, hook):
+        self.hook = hook
+
+    def __enter__(self):
+        self.hook()
+
+    def __exit__(self, *exc):
+        return False
+
+    async def __aenter__(self):
+        self.hook()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class TestRefreshRaces:
+    """The 'someone else already refreshed' branches, replayed exactly."""
+
+    def test_expiry_refreshed_by_another_thread(self):
+        """If the token was renewed while waiting, no second refresh happens."""
+        fake = FakeSolarEdge(current=2)
+        auth = _auth(_token(1, expires_in=0))
+        renewed_elsewhere = _HookLock(lambda: setattr(auth, "_token", _token(2)))
+        auth._sync_lock = renewed_elsewhere  # ty: ignore[invalid-assignment]
+        client = MonitoringClient(
+            oauth=auth, client=httpx.Client(transport=fake.transport())
+        )
+        assert client.get_site_details(42) == {"ok": True}
+        assert fake.refreshes == 0
+
+    def test_401_refreshed_by_another_thread(self):
+        """After a 401, a token renewed elsewhere is retried without refreshing."""
+        fake = FakeSolarEdge(current=2)
+        token = OAuthToken("access-1", "refresh-1", time.time() + 7200)
+        auth = _auth(token)
+        renewed_elsewhere = _HookLock(lambda: setattr(auth, "_token", _token(2)))
+        auth._sync_lock = renewed_elsewhere  # ty: ignore[invalid-assignment]
+        client = MonitoringClient(
+            oauth=auth, client=httpx.Client(transport=fake.transport())
+        )
+        assert client.get_site_details(42) == {"ok": True}
+        assert fake.refreshes == 0
+        assert len(fake.requests) == 2  # the 401, then the retry
+
+    async def test_async_expiry_refreshed_by_another_task(self):
+        """The async flow skips a refresh another task already did."""
+        fake = FakeSolarEdge(current=2)
+        auth = _auth(_token(1, expires_in=0))
+        renewed_elsewhere = _HookLock(lambda: setattr(auth, "_token", _token(2)))
+        auth._async_lock = renewed_elsewhere  # ty: ignore[invalid-assignment]
+        async with AsyncMonitoringClient(
+            oauth=auth, client=httpx.AsyncClient(transport=fake.async_transport())
+        ) as client:
+            assert await client.get_site_details(42) == {"ok": True}
+        assert fake.refreshes == 0
+
+    @pytest.mark.parametrize("use_async", [False, True])
+    async def test_refresh_returning_same_token_raises_the_401(self, use_async):
+        """If a refresh changes nothing, the caller gets the API's 401.
+
+        Regression: the flow used to stop after the refresh, so httpx handed
+        back the token endpoint's 200 as if it were the API's answer.
+        """
+
+        def handler(request):
+            if str(request.url) == TOKEN_URL:
+                return httpx.Response(
+                    200, json={"access_token": "access-1", "refresh_token": "r2"}
+                )
+            return httpx.Response(401, json={})
+
+        token = OAuthToken("access-1", "refresh-1", time.time() + 7200)
+        transport = httpx.MockTransport(handler)
+        with pytest.raises(SolarEdgeAuthError):
+            if use_async:
+                async with AsyncMonitoringClient(
+                    oauth=_auth(token), client=httpx.AsyncClient(transport=transport)
+                ) as client:
+                    await client.get_site_details(42)
+            else:
+                MonitoringClient(
+                    oauth=_auth(token), client=httpx.Client(transport=transport)
+                ).get_site_details(42)
+
+    def test_sync_client_rejects_any_awaitable_callback(self):
+        """A non-coroutine awaitable from the callback is refused too."""
+
+        class Pending:
+            def __await__(self):  # pragma: no cover - never awaited
+                yield
+
+        fake = FakeSolarEdge(current=1)
+        auth = OAuth2(
+            _token(1, expires_in=0),
+            client_id="cid",
+            client_secret="cs",
+            on_token_update=lambda token: Pending(),
+        )
+        client = MonitoringClient(
+            oauth=auth, client=httpx.Client(transport=fake.transport())
+        )
+        with pytest.raises(SolarEdgeValidationError, match="awaitable"):
+            client.get_site_details(42)

@@ -292,11 +292,20 @@ def site_alerts(
 # --- inventory ---------------------------------------------------------------
 
 
-def devices(site_id: int | str, types: Iterable[DeviceType] | None) -> Request:
+def _one_or_many(values: str | Iterable[str] | None) -> list[str]:
+    """Accept a single enum value or an iterable of them."""
+    if values is None:
+        return []
+    if isinstance(values, str):
+        return [values]
+    return list(values)
+
+
+def devices(
+    site_id: int | str, types: DeviceType | Iterable[DeviceType] | None
+) -> Request:
     """``GET /sites/{id}/devices``, with ``types`` sent as a repeated key."""
-    if isinstance(types, str):
-        types = [types]
-    params = [("types", t) for t in types] if types else None
+    params = [("types", t) for t in _one_or_many(types)]
     return _get(_path("sites", _site(site_id), "devices"), params)
 
 
@@ -335,20 +344,19 @@ def family_lifetime_energy(
     serial_numbers: Iterable[str] | None,
     start: datetime,
     end: datetime,
-    meters: Iterable[MeterType] | None = None,
+    meters: MeterType | Iterable[MeterType] | None = None,
 ) -> Request:
     """``GET /sites/{id}/{family}[/{serialNumbers}]/lifetime-energy``."""
     parts = ["sites", _site(site_id), family]
     if serial_numbers is not None:
         parts.append(_serials(serial_numbers))
     parts.append("lifetime-energy")
-    if isinstance(meters, str):
-        meters = [meters]
+    directions = _one_or_many(meters)
     return _get(
         _path(*parts),
         [
             *_required_window(start, end),
-            ("meters", ",".join(meters) if meters else None),
+            ("meters", ",".join(directions) if directions else None),
         ],
     )
 

@@ -17,6 +17,7 @@ from solaredge import (
     SolarEdgeRateLimitError,
     SolarEdgeValidationError,
 )
+from solaredge.exceptions import error_from_response
 
 API_KEY = "test_key"
 BASE_PATH = "/v2"
@@ -881,3 +882,12 @@ class TestErrorTranslation:
             await client.get_site_details(site_id=1)
         assert excinfo.value.status_code == 429
         assert excinfo.value.retry_after == "7"
+
+
+def test_error_without_request_has_no_url():
+    """A response that was never tied to a request still yields an error."""
+    err = error_from_response(httpx.Response(500, text="boom"))
+    assert isinstance(err, SolarEdgeServerError)
+    assert err.url is None
+    assert err.response_body == "boom"
+    assert "for " not in str(err)

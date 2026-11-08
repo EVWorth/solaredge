@@ -43,15 +43,23 @@ dev = [
     "prek",
 ]
 test = ["pytest", "pytest-asyncio", "pytest-cov"]
-validate = ["ruff"]
+validate = ["ruff", "ty"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.coverage.report]
+exclude_also = ['if __name__ == "__main__":']
+
 [tool.uv]
-required-version = ">=0.8.0"
+# Relative exclude-newer durations need uv 0.9.17+.
+required-version = ">=0.9.17"
 default-groups = ["dev", "validate", "test"]
+# Dependency cooldown: ignore anything published in the last 2 days, so a
+# freshly compromised or broken release can't land in dev or CI before it
+# has had time to be noticed and yanked.
+exclude-newer = "2 days"
 
 [tool.ruff]
 line-length = 88

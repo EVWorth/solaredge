@@ -65,7 +65,8 @@ def capture_redirect(redirect_uri: str, timeout: float) -> str | None:
             self.end_headers()
             self.wfile.write(_PAGE)
 
-        def log_message(self, *args: Any) -> None:  # keep the terminal quiet
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            # Keep the terminal quiet.
             pass
 
     try:

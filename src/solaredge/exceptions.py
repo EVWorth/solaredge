@@ -115,10 +115,19 @@ def _response_body(response: httpx.Response) -> Any:
     try:
         return response.json()
     except ValueError:
-        try:
-            return response.text or None
-        except UnicodeDecodeError:
-            return None
+        # httpx decodes with replacement characters, so .text never raises.
+        return response.text or None
+
+
+def request_url(response: httpx.Response) -> str | None:
+    """Return the URL the response answered, or None if it has no request.
+
+    ``response.request`` raises rather than returning None when unset.
+    """
+    try:
+        return str(response.request.url)
+    except RuntimeError:
+        return None
 
 
 def _rate_limit_headers(headers: httpx.Headers) -> dict[str, int]:
@@ -134,7 +143,7 @@ def error_from_response(response: httpx.Response) -> SolarEdgeAPIError:
     """Build the most specific SolarEdgeAPIError for an error response."""
     status = response.status_code
     body = _response_body(response)
-    url = str(response.request.url) if response.request is not None else None
+    url = request_url(response)
 
     if status in (401, 403):
         cls: type[SolarEdgeAPIError] = SolarEdgeAuthError
