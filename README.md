@@ -326,9 +326,22 @@ uv run prek install -t commit-msg
 ```
 
 ```bash
-# Commiting changes
+# Committing changes
 uv run cz c
 ```
+
+### Releasing
+
+Releases are automatic. Every merge to `main` runs the full test suite, then
+commitizen reads the conventional commits since the last tag:
+
+- `fix:` releases a patch, `feat:` a minor version, and `BREAKING CHANGE` (or `feat!:`) a major version.
+- `docs:`, `ci:`, `test:`, `chore:` and the like don't release anything.
+
+When there's something to release, CI commits the version bump and CHANGELOG
+to `main`, creates the tag and GitHub release, and publishes to PyPI. Nobody
+tags or publishes by hand, and commit types decide the version, so use them
+deliberately.
 
 ## API Documentation
 

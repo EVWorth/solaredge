@@ -1,43 +1,126 @@
-name: Publish to PyPI
+name: Release
 
-# Publishing a GitHub Release is the only way to publish to PyPI, so every
-# PyPI version has a matching tag and release on GitHub.
+# Every push to main is validated, then released if it carries anything to
+# release. Nobody tags or publishes by hand:
+#
+# 1. If the version in pyproject.toml is already tagged, commitizen looks at
+#    the conventional commits since that tag and bumps if any warrant it
+#    (fix -> patch, feat -> minor, BREAKING CHANGE -> major). It commits the
+#    new version and CHANGELOG to main. If nothing warrants a bump, the run
+#    stops here.
+#    If the version is not tagged yet (a bump merged by hand), it is released
+#    as is.
+# 2. A GitHub release and tag are created from that version's CHANGELOG
+#    section.
+# 3. The tagged commit is built and published to PyPI.
+#
+# Pushes made with GITHUB_TOKEN never trigger workflows, so the bump commit
+# does not start another run.
 on:
-  release:
-    types: [published]
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
+  validate:
+    uses: ./.github/workflows/validate.yaml
+
+  release:
+    name: Bump, tag and create the GitHub release
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the bump commit, create the tag and release
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # commitizen reads the history since the last tag
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Bump if needed and create the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          version=$(uv version --short)
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null; then
+            # Already released; bump only if new commits call for it.
+            # Exit codes 3 and 21 mean "nothing to bump", which is not an error.
+            uv run cz --no-raise 3,21 bump --yes
+            bumped=$(uv version --short)
+            if [ "$bumped" = "$version" ]; then
+              echo "Nothing to release since $version."
+              echo "released=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version=$bumped
+            git push origin HEAD:main
+          else
+            echo "$version is not tagged yet; releasing it as is."
+          fi
+
+          # Release notes are this version's section of CHANGELOG.md.
+          awk -v v="$version" '$0 ~ "^## " v " " {found=1; next} found && /^## / {exit} found' CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then
+            notes=(--notes-file notes.md)
+          else
+            notes=(--generate-notes)
+          fi
+          gh release create "$version" --target "$(git rev-parse HEAD)" --title "$version" "${notes[@]}"
+
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   pypi-publish:
     name: Upload release to PyPI
+    needs: release
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/solaredge
     permissions:
+      contents: read
       id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
-      # A release event checks out the commit the release's tag points at.
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release.outputs.version }}
 
-      - name: Set up UV
+      - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Check the tag matches the package version
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ needs.release.outputs.version }}
         run: |
-          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          VERSION=$(uv version --short)
           if [ "$TAG" != "$VERSION" ]; then
-            echo "::error::Release tag '$TAG' does not match pyproject.toml version '$VERSION'. Tag the commit that bumped the version."
+            echo "::error::Tag '$TAG' does not match pyproject.toml version '$VERSION'."
             exit 1
           fi
           echo "Publishing $VERSION"
 
-      - name: sync venv and build package with uv
-        run: |
-          uv sync
-          uv build
+      - name: Build the package
+        run: uv build
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
