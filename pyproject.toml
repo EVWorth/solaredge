@@ -29,6 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.28.1",
+    "typing-extensions>=4.7",
 ]
 
 [project.urls]
@@ -44,6 +45,7 @@ dev = [
 ]
 test = ["pytest", "pytest-asyncio", "pytest-cov"]
 validate = ["ruff", "ty"]
+codegen = ["pyyaml"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

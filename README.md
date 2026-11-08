@@ -37,6 +37,7 @@ A Python client for the SolarEdge Monitoring API (V2), with synchronous and asyn
   - [Synchronous Usage](#synchronous-usage)
   - [Asynchronous Usage](#asynchronous-usage)
   - [Methods](#methods)
+  - [Typed Responses](#typed-responses)
   - [Error Handling](#error-handling)
 - [Rate Limits](#rate-limits)
 - [Migrating from 2.x](#migrating-from-2x)
@@ -49,7 +50,8 @@ A Python client for the SolarEdge Monitoring API (V2), with synchronous and asyn
   (2.1.0) and Advanced Monitoring (2.0.1) APIs, plus `get()` for anything added later
 - **Sync & Async Support**: `MonitoringClient` and `AsyncMonitoringClient` share
   one definition of every method, so they cannot drift apart
-- **Typed**: full annotations, `py.typed`, and `Literal` types for every enumerated parameter
+- **Typed**: full annotations, `py.typed`, `Literal` types for every enumerated
+  parameter, and a `TypedDict` for every response, generated from SolarEdge's specs
 - **OAuth built in**: Site Access tokens are refreshed automatically, with a
   `uv run python -m solaredge login` helper for homeowners
 - **Safe by default**: arguments are validated before anything is sent, and
@@ -201,7 +203,8 @@ asyncio.run(main())
 
 ### Methods
 
-Every method returns the parsed JSON unchanged. Optional arguments left as
+Every method returns the parsed JSON unchanged, typed as a `TypedDict` (see
+[Typed Responses](#typed-responses)). Optional arguments left as
 `None` are not sent, so the API's own defaults apply. The
 [API reference](docs/SE_monitoring_API.md) lists the paths, parameters and
 per-resolution window limits.
@@ -227,6 +230,25 @@ Telemetry, status and lifetime methods cover every device of that kind on the
 site. Pass `serial_numbers=[...]` to limit them to specific devices. V2 reports
 units in upper case (`"WH"`, `"KWH"`, `"W"`), so compare them
 case-insensitively.
+
+### Typed Responses
+
+Responses are annotated with `TypedDict`s generated from SolarEdge's OpenAPI
+specs, so your editor completes field names and a type checker catches a
+misspelt key. The async client returns awaitables of the same types.
+
+```python
+from solaredge.types import Measurements
+
+power: Measurements = client.get_power(SITE_ID)
+for sample in power.get("values", []):
+    print(sample.get("timestamp"), sample.get("value"))
+```
+
+They are type hints only: at runtime every response is still a plain `dict`.
+Fields the spec doesn't mark as required are `NotRequired`, because real
+responses can leave them out, so prefer `.get()` for those. All the types live
+in `solaredge.types`.
 
 ### Error Handling
 
@@ -328,6 +350,13 @@ uv run prek install -t commit-msg
 ```bash
 # Committing changes
 uv run cz c
+```
+
+```bash
+# Regenerate solaredge/types.py from the specs in specs/
+uv run --group codegen scripts/gen_types.py
+# ...or download SolarEdge's latest published specs first
+uv run --group codegen scripts/gen_types.py --fetch
 ```
 
 ### Releasing

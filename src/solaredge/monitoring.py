@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from collections.abc import Awaitable
 
 import httpx
 
@@ -20,7 +19,7 @@ from .exceptions import (
     SolarEdgeValidationError,
     error_from_response,
 )
-from ._operations import Operations
+from ._operations import Sync, Async, Operations
 
 DEFAULT_BASE_URL = "https://monitoringapi.solaredge.com/v2"
 DEFAULT_TIMEOUT = 10.0
@@ -107,7 +106,7 @@ class BaseMonitoringClient:
             ) from exc
 
 
-class AsyncMonitoringClient(BaseMonitoringClient, Operations[Awaitable[Any]]):
+class AsyncMonitoringClient(BaseMonitoringClient, Operations[Async]):
     """Asynchronous client for the SolarEdge Monitoring API (V2).
 
     Authenticate with exactly one of:
@@ -171,7 +170,7 @@ class AsyncMonitoringClient(BaseMonitoringClient, Operations[Awaitable[Any]]):
         return self._parse_response(response)
 
 
-class MonitoringClient(BaseMonitoringClient, Operations[Any]):
+class MonitoringClient(BaseMonitoringClient, Operations[Sync]):
     """Synchronous client for the SolarEdge Monitoring API (V2).
 
     Mirrors :class:`AsyncMonitoringClient` using ``httpx.Client``.

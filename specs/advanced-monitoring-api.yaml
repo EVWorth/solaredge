@@ -1,0 +1,932 @@
+openapi: 3.0.1
+info:
+  version: 2.0.1
+  title: SolarEdge Advanced Monitoring API
+  description: |-
+    The SolarEdge **Advanced Monitoring API** covers the four advanced feature areas that go beyond standard fleet monitoring.
+
+    It is the right surface to use when you need:
+
+    - **Per Destination** — site power and energy broken down by where the energy goes (self-consumption, storage, grid export).
+    - **Live Power Flow** — start a live telemetry session for a site and read real-time power-flow samples at high frequency.
+    - **Weather Guard** — read whether Weather Guard storm mode is currently enabled for a site.
+    - **Battery Backup Reserve** — read the site's current battery backup reserve configuration (the minimum state of charge to retain for backup during a grid outage).
+
+    Most endpoints are read-only. The one write operation in this API is **Start Live Power Flow** (`POST /sites/{id}/power-flow`), which activates a 1-minute live telemetry session. Updating Weather Guard or Battery Backup Reserve configuration is handled by the separate **SolarEdge Fleet Management API** (forthcoming).
+
+    For standard fleet monitoring (sites, energy, power, alerts, inventory, telemetry, meter and battery measurements), use the **Basic Monitoring API**.
+
+    ## Authentication
+
+    This API supports two authentication methods:
+
+    * **API Key** (`X-API-Key` header) — include your User API Key in every request. Obtain your key from the SolarEdge developer portal.
+    * **OAuth 2.0** (bearer token, authorization code flow) — use an OAuth token to access data on behalf of a system owner. All endpoints in this API accept both authentication methods.
+
+    ## Tier access
+
+    The Advanced Monitoring API is **available only on the Pro and Enterprise tiers**. Calls to advanced endpoints from a Free-, Starter-, or Growth-tier API key are rejected with `403 Forbidden`. Quota limits — monthly credits and CPM — vary by tier; Pro and Enterprise customers may have custom limits. See the `429 Too Many Requests` response on any operation for the rate-limit model.
+
+    ## Credit cost
+
+    Each successful API call consumes `1` credit from the caller's billing-cycle quota. Calls that return an error are not charged.
+  contact:
+    name: SolarEdge API Team
+    url: 'https://developer.solaredge.com'
+servers:
+  - url: 'https://monitoringapi.solaredge.com/v2'
+    description: Production
+paths:
+  '/sites/{id}/power/per-destination':
+    get:
+      tags:
+        - Per Destination
+      summary: Power Per Destination
+      description: |-
+        Returns the site's calculated PV production power time series broken down by **destination** (self-consumption, charging storage, export to grid). Supported resolutions: QUARTER_HOUR and HOUR only.
+
+        Use this when you need to see *where* the power produced by the PV system is going at each time step, not just the total.
+
+        **Computation**
+
+        Each bucketed value is derived from raw device telemetry, which arrives at approximately 5-minute intervals with non-aligned timestamps. Values are proportionally time-shifted across bucket boundaries so that each raw sample contributes only the fraction of its interval that falls within the requested bucket window. The total site production figure is based on inverter output; on sites with battery storage, battery discharge power is subtracted from and charge power is added to the inverter output. The destination breakdown (self-consumption, toStorage, toGrid) then allocates that total across the measured consumption and export sinks.
+
+        The timestamp of each returned value marks the **start** of the aggregation window.
+
+        **Historical data window limits per `resolution`:**
+        * For `QUARTER_HOUR`, you can query up to **12 hours** of data.
+        * For `HOUR`, you can query up to **24 hours** of data.
+
+        Requests that exceed the limit for the chosen resolution are rejected with `400 Bad Request`.
+      operationId: getPowerPerDestination
+      parameters:
+        - name: from
+          in: query
+          description: 'If unspecified, will return measurements from midnight today (local site time).'
+          schema:
+            type: string
+            format: date-time
+            example: '2022-11-14T11:30:54.276805300Z'
+        - name: to
+          in: query
+          description: 'If unspecified, will return measurements until now (local site time).'
+          schema:
+            type: string
+            format: date-time
+            example: '2022-11-14T11:30:54.276805300Z'
+        - name: resolution
+          in: query
+          description: Desired resolution of the returned power samples. Defaults to QUARTER_HOUR
+          schema:
+            type: string
+            enum:
+              - QUARTER_HOUR
+              - HOUR
+            default: QUARTER_HOUR
+        - name: id
+          in: path
+          description: The Monitoring Site ID.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerPerDestination'
+              examples:
+                Example 1:
+                  value:
+                    siteId: 49212
+                    production:
+                      unit: KW
+                      values:
+                        - timestamp: '2022-11-14T11:30:00Z'
+                          total: 18.01
+                          toSelfConsumption: 9.98
+                          toStorage: 7.96
+                          toGrid: 0.07
+                    consumption:
+                      unit: KW
+                      values:
+                        - timestamp: '2022-11-14T11:30:00Z'
+                          total: 20.41
+                          fromPv: 9.98
+                          fromStorage: 10.01
+                          fromGrid: 0.42
+        '400':
+          description: Bad Request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '401':
+          description: Unauthorized — missing or invalid API key or OAuth token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '403':
+          description: 'Forbidden — the caller''s subscription tier does not include access to this endpoint, or the API key does not have permission for the requested site.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '429':
+          description: |-
+            Too Many Requests — the client has exceeded its rate limit.
+
+            Rate limits are enforced per developer account on two axes:
+            - **Monthly credit quota** — total credits available per monthly billing cycle.
+            - **CPM (calls per minute)** — short-window throughput limit.
+
+            Both limits depend on the subscription **tier** (Free, Starter, Growth, Pro, Enterprise). Pro customers may have custom limits negotiated with their account manager.
+
+            Each API call consumes a number of credits as documented per operation (currently `1` for every operation). When the credit budget is exhausted or CPM is exceeded, subsequent calls return `429` until the limit resets (monthly credits reset on the account's billing-cycle anniversary date; CPM resets within the minute).
+
+            Contact your account manager to confirm your tier's exact limits or to request a quota increase.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          headers:
+            x-ratelimit-limit-minute:
+              schema:
+                type: integer
+              description: Maximum number of calls allowed per minute for the caller's tier.
+            x-ratelimit-remaining-minute:
+              schema:
+                type: integer
+              description: Number of calls remaining in the current one-minute window.
+            retry-after:
+              schema:
+                type: integer
+              description: Seconds until the caller may retry. Present when the limit has been exceeded.
+      security:
+        - X-API-Key: []
+        - OAuth: []
+      servers:
+        - url: 'https://monitoringapi.solaredge.com/v2'
+          description: Production
+      x-credit-cost: 1
+  '/sites/{id}/energy/per-destination':
+    get:
+      tags:
+        - Per Destination
+      summary: Energy Per Destination
+      description: |-
+        Returns the site's calculated PV production energy time series broken down by **destination** (self-consumption, charging storage, export to grid). `DAY` and larger windows are aligned to midnight in the site's configured local timezone.
+
+        Use this when you need to see *where* the energy produced by the PV system went over each aggregation bucket, not just the total.
+
+        **Computation**
+
+        Each bucketed value is derived from raw device telemetry, which arrives at approximately 5-minute intervals with non-aligned timestamps. Energy delta samples are proportionally time-shifted across bucket boundaries so that each raw sample contributes only the fraction of its interval that falls within the requested bucket window. The total site production figure is based on inverter energy; on sites with battery storage, battery discharge energy is subtracted from and charge energy is added to the inverter output. The destination breakdown (self-consumption, toStorage, toGrid) then allocates that total across the measured consumption and export sinks.
+
+        The timestamp of each returned value marks the **start** of the aggregation window.
+
+        **Historical data window limits per `resolution`:**
+        * For `QUARTER_HOUR`, you can query up to **12 hours** of data.
+        * For `HOUR`, you can query up to **24 hours** of data.
+        * For `DAY`, you can query up to **1 month** of data.
+        * For `WEEK`, you can query up to **1 year** of data.
+        * For `MONTH`, you can query up to **3 years** of data.
+
+        Requests that exceed the limit for the chosen resolution are rejected with `400 Bad Request`.
+      operationId: getEnergyPerDestination
+      parameters:
+        - name: from
+          in: query
+          description: 'If unspecified, will return measurements from midnight today (local site time).'
+          schema:
+            type: string
+            format: date-time
+            example: '2022-11-14T11:30:54.276805300Z'
+        - name: to
+          in: query
+          description: 'If unspecified, will return measurements until now (local site time).'
+          schema:
+            type: string
+            format: date-time
+            example: '2022-11-14T11:30:54.276805300Z'
+        - name: resolution
+          in: query
+          description: Desired resolution of the returned energy samples. Defaults to QUARTER_HOUR
+          schema:
+            type: string
+            enum:
+              - QUARTER_HOUR
+              - HOUR
+              - DAY
+              - WEEK
+              - MONTH
+              - YEAR
+              - TOTAL
+            default: QUARTER_HOUR
+        - name: id
+          in: path
+          description: The Monitoring Site ID.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnergyPerDestination'
+              examples:
+                Example 1:
+                  value:
+                    siteId: 49212
+                    production:
+                      unit: KWH
+                      values:
+                        - timestamp: '2022-11-14T11:30:00Z'
+                          total: 18.01
+                          toSelfConsumption: 9.98
+                          toStorage: 7.96
+                          toGrid: 0.07
+                    consumption:
+                      unit: KWH
+                      values:
+                        - timestamp: '2022-11-14T11:30:00Z'
+                          total: 20.41
+                          fromPv: 9.98
+                          fromStorage: 10.01
+                          fromGrid: 0.42
+        '400':
+          description: Bad Request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '401':
+          description: Unauthorized — missing or invalid API key or OAuth token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '403':
+          description: 'Forbidden — the caller''s subscription tier does not include access to this endpoint, or the API key does not have permission for the requested site.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '429':
+          description: |-
+            Too Many Requests — the client has exceeded its rate limit.
+
+            Rate limits are enforced per developer account on two axes:
+            - **Monthly credit quota** — total credits available per monthly billing cycle.
+            - **CPM (calls per minute)** — short-window throughput limit.
+
+            Both limits depend on the subscription **tier** (Free, Starter, Growth, Pro, Enterprise). Pro customers may have custom limits negotiated with their account manager.
+
+            Each API call consumes a number of credits as documented per operation (currently `1` for every operation). When the credit budget is exhausted or CPM is exceeded, subsequent calls return `429` until the limit resets (monthly credits reset on the account's billing-cycle anniversary date; CPM resets within the minute).
+
+            Contact your account manager to confirm your tier's exact limits or to request a quota increase.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          headers:
+            x-ratelimit-limit-minute:
+              schema:
+                type: integer
+              description: Maximum number of calls allowed per minute for the caller's tier.
+            x-ratelimit-remaining-minute:
+              schema:
+                type: integer
+              description: Number of calls remaining in the current one-minute window.
+            retry-after:
+              schema:
+                type: integer
+              description: Seconds until the caller may retry. Present when the limit has been exceeded.
+      security:
+        - X-API-Key: []
+        - OAuth: []
+      servers:
+        - url: 'https://monitoringapi.solaredge.com/v2'
+          description: Production
+      x-credit-cost: 1
+  '/sites/{id}/power-flow':
+    get:
+      tags:
+        - Live Power Flow
+      summary: Site Power Flow
+      description: |-
+        Returns the most recent power-flow sample for the site: instantaneous power on the PV, grid, storage and load nodes, plus the direction of each flow.
+
+        When no live session is active the endpoint returns the last recorded sample at standard 5-minute polling (`refreshRate: 300`). To get high-frequency live data, start a session first using `POST /sites/{id}/power-flow`.
+
+        Use the `refreshRate` field in the response to detect whether a live session is currently active. Use `updatedAt` to check the age of the sample before consuming the values.
+      operationId: getSitePowerFlow
+      parameters:
+        - name: id
+          in: path
+          description: The Monitoring Site ID.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SitePowerFlow'
+        '400':
+          description: Bad Request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '401':
+          description: Unauthorized — missing or invalid API key or OAuth token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '403':
+          description: 'Forbidden — the caller''s subscription tier does not include access to this endpoint, or the API key does not have permission for the requested site.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '429':
+          description: |-
+            Too Many Requests — the client has exceeded its rate limit.
+
+            Rate limits are enforced per developer account on two axes:
+            - **Monthly credit quota** — total credits available per monthly billing cycle.
+            - **CPM (calls per minute)** — short-window throughput limit.
+
+            Both limits depend on the subscription **tier** (Free, Starter, Growth, Pro, Enterprise). Pro customers may have custom limits negotiated with their account manager.
+
+            Each API call consumes a number of credits as documented per operation (currently `1` for every operation). When the credit budget is exhausted or CPM is exceeded, subsequent calls return `429` until the limit resets (monthly credits reset on the account's billing-cycle anniversary date; CPM resets within the minute).
+
+            Contact your account manager to confirm your tier's exact limits or to request a quota increase.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          headers:
+            x-ratelimit-limit-minute:
+              schema:
+                type: integer
+              description: Maximum number of calls allowed per minute for the caller's tier.
+            x-ratelimit-remaining-minute:
+              schema:
+                type: integer
+              description: Number of calls remaining in the current one-minute window.
+            retry-after:
+              schema:
+                type: integer
+              description: Seconds until the caller may retry. Present when the limit has been exceeded.
+      security:
+        - X-API-Key: []
+        - OAuth: []
+      servers:
+        - url: 'https://monitoringapi.solaredge.com/v2'
+          description: Production
+      x-credit-cost: 1
+    post:
+      tags:
+        - Live Power Flow
+      summary: Start Live Power Flow
+      description: |-
+        Starts a Live Power Flow for this site. Once activated, the Live Power Flow will remain active for this site for 1 minute.
+
+        Note: Live Power Flow can only be activated in supported firmware versions, and when the site is connected via Ethernet, WiFi or LTE (US only).
+
+        **Authentication:** works with an API key (`X-API-Key`) or an OAuth 2.0 token with the `SITE_DATA` scope. Requires a Business Pro or Enterprise plan.
+      operationId: startLivePowerFlow
+      parameters:
+        - name: id
+          in: path
+          description: The Monitoring Site ID.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 'Live Power Flow start request accepted. The response has no body. To confirm the session is running, call `GET /sites/{id}/power-flow`: `refreshRate` drops from 300 to the live interval (a few seconds) and `updatedAt` updates.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: Confirmation status of the live session activation.
+                  refreshRate:
+                    type: integer
+                    description: The sampling interval in seconds for the newly activated live session.
+                    format: int32
+        '400':
+          description: 'Bad Request: the request was rejected. A 200 does not guarantee the site can stream live data (firmware or connectivity). Check `refreshRate` on the GET to confirm.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '401':
+          description: Unauthorized — missing or invalid API key or OAuth token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '403':
+          description: 'Forbidden — the caller''s subscription tier does not include access to this endpoint, or the API key does not have permission for the requested site.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '429':
+          description: |-
+            Too Many Requests — the client has exceeded its rate limit.
+
+            Rate limits are enforced per developer account on two axes:
+            - **Monthly credit quota** — total credits available per monthly billing cycle.
+            - **CPM (calls per minute)** — short-window throughput limit.
+
+            Both limits depend on the subscription **tier** (Free, Starter, Growth, Pro, Enterprise). Pro customers may have custom limits negotiated with their account manager.
+
+            Each API call consumes a number of credits as documented per operation (currently `1` for every operation). When the credit budget is exhausted or CPM is exceeded, subsequent calls return `429` until the limit resets (monthly credits reset on the account's billing-cycle anniversary date; CPM resets within the minute).
+
+            Contact your account manager to confirm your tier's exact limits or to request a quota increase.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          headers:
+            x-ratelimit-limit-minute:
+              schema:
+                type: integer
+              description: Maximum number of calls allowed per minute for the caller's tier.
+            x-ratelimit-remaining-minute:
+              schema:
+                type: integer
+              description: Number of calls remaining in the current one-minute window.
+            retry-after:
+              schema:
+                type: integer
+              description: Seconds until the caller may retry. Present when the limit has been exceeded.
+      security:
+        - X-API-Key: []
+        - OAuth:
+            - SITE_DATA
+      servers:
+        - url: 'https://monitoringapi.solaredge.com/v2'
+          description: Production
+      x-credit-cost: 1
+  '/sites/{id}/weather-guard':
+    get:
+      tags:
+        - Weather Guard
+      summary: Weather Guard Configuration
+      description: |-
+        Returns whether Weather Guard storm mode is currently enabled for the site.
+
+        Updating Weather Guard configuration is handled by the **SolarEdge Fleet Management API** (forthcoming). It is not part of the read-only Monitoring API.
+      operationId: getWeatherGuard
+      parameters:
+        - name: id
+          in: path
+          description: The Monitoring Site ID.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeatherGuard'
+        '400':
+          description: Bad Request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '401':
+          description: Unauthorized — missing or invalid API key or OAuth token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '403':
+          description: 'Forbidden — the caller''s subscription tier does not include access to this endpoint, or the API key does not have permission for the requested site.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '429':
+          description: |-
+            Too Many Requests — the client has exceeded its rate limit.
+
+            Rate limits are enforced per developer account on two axes:
+            - **Monthly credit quota** — total credits available per monthly billing cycle.
+            - **CPM (calls per minute)** — short-window throughput limit.
+
+            Both limits depend on the subscription **tier** (Free, Starter, Growth, Pro, Enterprise). Pro customers may have custom limits negotiated with their account manager.
+
+            Each API call consumes a number of credits as documented per operation (currently `1` for every operation). When the credit budget is exhausted or CPM is exceeded, subsequent calls return `429` until the limit resets (monthly credits reset on the account's billing-cycle anniversary date; CPM resets within the minute).
+
+            Contact your account manager to confirm your tier's exact limits or to request a quota increase.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          headers:
+            x-ratelimit-limit-minute:
+              schema:
+                type: integer
+              description: Maximum number of calls allowed per minute for the caller's tier.
+            x-ratelimit-remaining-minute:
+              schema:
+                type: integer
+              description: Number of calls remaining in the current one-minute window.
+            retry-after:
+              schema:
+                type: integer
+              description: Seconds until the caller may retry. Present when the limit has been exceeded.
+      security:
+        - X-API-Key: []
+        - OAuth: []
+      servers:
+        - url: 'https://monitoringapi.solaredge.com/v2'
+          description: Production
+      x-credit-cost: 1
+  '/sites/{id}/backup-reserve':
+    get:
+      tags:
+        - Battery Backup Reserve
+      summary: Battery Backup Reserve Configuration
+      description: |-
+        Returns the site's current **battery backup reserve** configuration: the minimum state of charge that the battery should always retain so that it is available for backup during a grid outage.
+
+        Updating the backup-reserve configuration is handled by the **SolarEdge Fleet Management API** (forthcoming). It is not part of the read-only Monitoring API.
+      operationId: getBatteryBackupReserve
+      parameters:
+        - name: id
+          in: path
+          description: The Monitoring Site ID.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatteryBackupReserve'
+        '400':
+          description: Bad Request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '401':
+          description: Unauthorized — missing or invalid API key or OAuth token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '403':
+          description: 'Forbidden — the caller''s subscription tier does not include access to this endpoint, or the API key does not have permission for the requested site.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '429':
+          description: |-
+            Too Many Requests — the client has exceeded its rate limit.
+
+            Rate limits are enforced per developer account on two axes:
+            - **Monthly credit quota** — total credits available per monthly billing cycle.
+            - **CPM (calls per minute)** — short-window throughput limit.
+
+            Both limits depend on the subscription **tier** (Free, Starter, Growth, Pro, Enterprise). Pro customers may have custom limits negotiated with their account manager.
+
+            Each API call consumes a number of credits as documented per operation (currently `1` for every operation). When the credit budget is exhausted or CPM is exceeded, subsequent calls return `429` until the limit resets (monthly credits reset on the account's billing-cycle anniversary date; CPM resets within the minute).
+
+            Contact your account manager to confirm your tier's exact limits or to request a quota increase.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          headers:
+            x-ratelimit-limit-minute:
+              schema:
+                type: integer
+              description: Maximum number of calls allowed per minute for the caller's tier.
+            x-ratelimit-remaining-minute:
+              schema:
+                type: integer
+              description: Number of calls remaining in the current one-minute window.
+            retry-after:
+              schema:
+                type: integer
+              description: Seconds until the caller may retry. Present when the limit has been exceeded.
+      security:
+        - X-API-Key: []
+        - OAuth: []
+      servers:
+        - url: 'https://monitoringapi.solaredge.com/v2'
+          description: Production
+      x-credit-cost: 1
+tags:
+  - name: Per Destination
+    description: 'Site-level power and energy aggregates broken down by destination (self-consumption, storage, grid export) and source (PV, storage, grid import).'
+  - name: Live Power Flow
+    description: 'Start a live telemetry session for a site and read its real-time power-flow samples. Use POST to activate a session, then poll GET to receive high-frequency data while the session is active.'
+  - name: Weather Guard
+    description: Read whether Weather Guard storm mode is currently enabled for a site. Updating the configuration is handled by the Fleet Management API (forthcoming).
+  - name: Battery Backup Reserve
+    description: Read the site's battery backup reserve configuration (the minimum state of charge to retain for backup). Updating the configuration is handled by the Fleet Management API (forthcoming).
+components:
+  securitySchemes:
+    X-API-Key:
+      type: apiKey
+      description: Use the User API Key provided by your account manager
+      name: X-API-Key
+      in: header
+    OAuth:
+      type: oauth2
+      description: Authorize using an approved OAuth 2.0 token. Use this option to access System Owner data.
+      flows:
+        authorizationCode:
+          refreshUrl: 'https://monitoringapi.solaredge.com/v2/oauth2/token'
+          authorizationUrl: 'https://connect.solaredge.com/authorize'
+          scopes:
+            SITE_DATA: Read aggregated site level data
+            DEVICE_DATA: Read specific device data
+          tokenUrl: 'https://monitoringapi.solaredge.com/v2/oauth2/token'
+  schemas:
+    PowerPerDestination:
+      type: object
+      properties:
+        siteId:
+          type: integer
+          format: int64
+        production:
+          $ref: '#/components/schemas/SiteProductionPower'
+        consumption:
+          $ref: '#/components/schemas/SiteConsumptionPower'
+    SiteProductionPower:
+      type: object
+      properties:
+        unit:
+          type: string
+          enum:
+            - W
+            - KW
+            - MW
+            - GW
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SiteProductionValue'
+    SiteProductionValue:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: offset-date-time
+        total:
+          type: number
+          format: float
+        toSelfConsumption:
+          type: number
+          format: float
+        toStorage:
+          type: number
+          format: float
+        toGrid:
+          type: number
+          format: float
+    SiteConsumptionPower:
+      type: object
+      properties:
+        unit:
+          type: string
+          enum:
+            - W
+            - KW
+            - MW
+            - GW
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SiteConsumptionValue'
+    SiteConsumptionValue:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: offset-date-time
+        total:
+          type: number
+          format: float
+        fromPv:
+          type: number
+          format: float
+        fromStorage:
+          type: number
+          format: float
+        fromGrid:
+          type: number
+          format: float
+    ProblemDetail:
+      type: object
+      properties:
+        type:
+          type: string
+          nullable: true
+          format: URI
+        title:
+          type: string
+        status:
+          type: integer
+          description: The HTTP status code for this occurrence of the problem.
+        detail:
+          type: string
+        instance:
+          type: string
+          nullable: true
+          format: URI
+        traceId:
+          type: string
+        errors:
+          type: object
+          description: Field-level validation errors keyed by parameter name.
+          additionalProperties:
+            type: string
+        properties:
+          type: object
+          additionalProperties:
+            type: object
+    EnergyPerDestination:
+      type: object
+      properties:
+        siteId:
+          type: integer
+          format: int64
+        production:
+          $ref: '#/components/schemas/SiteProductionEnergy'
+        consumption:
+          $ref: '#/components/schemas/SiteConsumptionEnergy'
+    SiteProductionEnergy:
+      type: object
+      properties:
+        unit:
+          type: string
+          enum:
+            - WH
+            - KWH
+            - MWH
+            - GWH
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SiteProductionValue'
+    SiteConsumptionEnergy:
+      type: object
+      properties:
+        unit:
+          type: string
+          enum:
+            - WH
+            - KWH
+            - MWH
+            - GWH
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SiteConsumptionValue'
+    SitePowerFlow:
+      type: object
+      properties:
+        updatedAt:
+          type: string
+          nullable: true
+          description: Timestamp of the most recent sample. Always check this before using the values — when no live session is active the response may be stale.
+          format: offset-date-time
+        refreshRate:
+          type: integer
+          description: 'Current sampling interval in seconds. `300` (5 minutes) when no live session is active. Drops to the live frequency while a session started via `POST /sites/{id}/power-flow` is active. Use this field to detect whether a live session is currently running.'
+          format: int32
+        unit:
+          type: string
+          enum:
+            - W
+            - kW
+          description: Power unit for all `power` fields in this response.
+        pv:
+          $ref: '#/components/schemas/EnergyElement'
+        load:
+          $ref: '#/components/schemas/EnergyElement'
+        storage:
+          type: object
+          properties:
+            active:
+              type: boolean
+            power:
+              type: number
+              nullable: true
+              description: Current charge or discharge power (in the unit indicated by the top-level `unit` field).
+              format: double
+            status:
+              type: string
+              nullable: true
+              enum:
+                - CHARGE
+                - DISCHARGE
+                - IDLE
+                - null
+            chargeLevel:
+              type: integer
+              nullable: true
+              description: Current battery charge level (%).
+              format: int32
+        grid:
+          type: object
+          properties:
+            active:
+              type: boolean
+            power:
+              type: number
+              nullable: true
+              description: Current import or export power (in the unit indicated by the top-level `unit` field).
+              format: double
+            status:
+              type: string
+              nullable: true
+              enum:
+                - IMPORT
+                - EXPORT
+                - IDLE
+                - GRID_OUTAGE
+                - null
+      example:
+        updatedAt: '2026-05-25T20:51:59+02:00'
+        refreshRate: 300
+        unit: kW
+        pv:
+          active: true
+          power: 0.02
+        load:
+          active: true
+          power: 0.31
+        storage:
+          active: true
+          power: 0.27
+          status: DISCHARGE
+          chargeLevel: 96
+        grid:
+          active: true
+          power: 0.02
+          status: IMPORT
+    EnergyElement:
+      type: object
+      properties:
+        active:
+          type: boolean
+          description: Whether this element is currently active (producing or consuming power).
+        power:
+          type: number
+          nullable: true
+          description: Current power in the unit indicated by the top-level `unit` field.
+          format: double
+    WeatherGuard:
+      type: object
+      properties:
+        status:
+          type: boolean
+    BatteryBackupReserve:
+      type: object
+      properties:
+        percentage:
+          type: number
+          nullable: true
+          format: float
+        backupReserveStatus:
+          type: string
+          enum:
+            - ENABLED
+            - DISABLED
+security:
+  - X-API-Key: []
+  - OAuth: []
