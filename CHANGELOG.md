@@ -1,3 +1,9 @@
+## 3.1.1 (2026-11-08)
+
+### Fix
+
+- **oauth**: retry after an unchanged refresh; add ty, build check, 100% coverage (#128)
+
 ## 3.1.0 (2026-11-06)
 
 ### Feat
