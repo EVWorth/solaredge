@@ -24,5 +24,6 @@ V1 parameter names such as `startTime` or `timeUnit`.
   `uv run`, never pip or poetry.
 - **Releases are automatic:** merging to `main` releases whatever the
   conventional commits call for (`fix` patch, `feat` minor, breaking major).
-  Pick commit types and PR titles accordingly, and never bump versions or
-  edit CHANGELOG.md by hand.
+  PRs are squash-merged, so the PR title is the commit commitizen reads:
+  pick its type deliberately, and never bump versions or edit CHANGELOG.md
+  by hand.
