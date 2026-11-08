@@ -7,7 +7,7 @@ build-backend = "uv_build"
 authors = [{ name = "evworth", email = "elliotworth@protonmail.com"}]
 license = {text = "MIT"}
 name = "solaredge"
-version = "3.1.1"
+version = "3.2.0"
 description = "Sync and async Python client for the SolarEdge Monitoring API (V2)"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,3 +1,9 @@
+## 3.2.0 (2026-11-08)
+
+### Feat
+
+- typed responses (TypedDict) for every API method (#136)
+
 ## 3.1.1 (2026-11-08)
 
 ### Fix
