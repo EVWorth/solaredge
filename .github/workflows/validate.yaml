@@ -1,9 +1,8 @@
 name: Validate
 on:
-  push:
-    branches:
-      - main
   pull_request:
+  # The release workflow runs this on every push to main before releasing.
+  workflow_call:
 
 # Read-only token; nothing here needs to write to the repository.
 permissions:

@@ -22,3 +22,7 @@ V1 parameter names such as `startTime` or `timeUnit`.
 - **Endpoint reference:** see `docs/SE_monitoring_API.md`.
 - **Tooling:** the project uses uv only. Docs and examples use `uv add` and
   `uv run`, never pip or poetry.
+- **Releases are automatic:** merging to `main` releases whatever the
+  conventional commits call for (`fix` patch, `feat` minor, breaking major).
+  Pick commit types and PR titles accordingly, and never bump versions or
+  edit CHANGELOG.md by hand.
