@@ -46,8 +46,8 @@ A Python client for the SolarEdge Monitoring API (V2), with synchronous and asyn
 
 ## Features
 
-- **Complete V2 coverage**: all 56 operations in SolarEdge's Basic Monitoring
-  (2.1.0) and Advanced Monitoring (2.0.1) APIs, plus `get()` for anything added later
+- **Complete V2 coverage**: all 59 operations in SolarEdge's Basic Monitoring
+  (2.2.0) and Advanced Monitoring (2.0.1) APIs, plus `get()` for anything added later
 - **Sync & Async Support**: `MonitoringClient` and `AsyncMonitoringClient` share
   one definition of every method, so they cannot drift apart
 - **Typed**: full annotations, `py.typed`, `Literal` types for every enumerated
@@ -214,7 +214,7 @@ per-resolution window limits.
 | Sites | `get_sites`, `get_site_details`, `get_overview`, `get_performance`, `get_power`, `get_energy`, `get_environmental_benefits`, `get_lifetime_energy`, `get_external_production_energy` |
 | Alerts | `get_alerts` (all sites), `get_site_alerts` |
 | Inventory | `get_devices`, `get_device` |
-| Telemetry | `get_inverters_telemetry`, `get_meters_telemetry`, `get_storage_telemetry` |
+| Telemetry | `get_inverters_telemetry`, `get_meters_telemetry`, `get_storage_telemetry`, `get_ev_chargers_telemetry`, `get_sensors_telemetry` |
 | Status | `get_inverters_status`, `get_storage_status` |
 | Lifetime counters | `get_inverters_lifetime_energy`, `get_meters_lifetime_energy`, `get_storage_lifetime_energy` |
 | Inverter | `get_inverter_power`, `_energy`, `_consumed_ac_power`, `_consumed_ac_energy`, `_voltage`, `_current`, `_frequency` |
@@ -227,7 +227,8 @@ per-resolution window limits.
 `SolarEdgeAuthError`.
 
 Telemetry, status and lifetime methods cover every device of that kind on the
-site. Pass `serial_numbers=[...]` to limit them to specific devices. V2 reports
+site. Pass `serial_numbers=[...]` to limit them to specific devices (sensors,
+which have no serial number, are always returned together). V2 reports
 units in upper case (`"WH"`, `"KWH"`, `"W"`), so compare them
 case-insensitively.
 

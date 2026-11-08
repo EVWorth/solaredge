@@ -52,9 +52,11 @@ from .types import (
     StorageStatusResponse,
     InverterStatusResponse,
     MeterTelemetryResponse,
+    SensorTelemetryResponse,
     SitePerformanceResponse,
     StorageTelemetryResponse,
     InverterTelemetryResponse,
+    EvChargerTelemetryResponse,
     MeterLifetimeEnergyResponse,
     SiteExternalProductionEnergy,
     StorageLifetimeEnergyResponse,
@@ -71,6 +73,7 @@ from ._endpoints import (
     SystemUnits,
     PercentageUnit,
     PowerResolution,
+    SensorResolution,
 )
 
 
@@ -545,6 +548,79 @@ class Operations(ABC, Generic[M]):
                 site_id, "storage", "telemetry", serial_numbers, start, end, resolution
             )
         )
+
+    @overload
+    def get_ev_chargers_telemetry(
+        self: Operations[Sync],
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: Resolution | None = None,
+        serial_numbers: Iterable[str] | None = None,
+    ) -> EvChargerTelemetryResponse: ...
+    @overload
+    def get_ev_chargers_telemetry(
+        self: Operations[Async],
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: Resolution | None = None,
+        serial_numbers: Iterable[str] | None = None,
+    ) -> Awaitable[EvChargerTelemetryResponse]: ...
+    def get_ev_chargers_telemetry(
+        self,
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: Resolution | None = None,
+        serial_numbers: Iterable[str] | None = None,
+    ) -> Any:
+        """Return charging power and energy for all EV chargers.
+
+        DAY and coarser resolutions return charging energy only. Serial numbers
+        that are not EV chargers on the site are skipped; ``404`` if none is.
+        """
+        return self._call(
+            ep.family_series(
+                site_id,
+                "ev-chargers",
+                "telemetry",
+                serial_numbers,
+                start,
+                end,
+                resolution,
+            )
+        )
+
+    @overload
+    def get_sensors_telemetry(
+        self: Operations[Sync],
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: SensorResolution | None = None,
+    ) -> SensorTelemetryResponse: ...
+    @overload
+    def get_sensors_telemetry(
+        self: Operations[Async],
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: SensorResolution | None = None,
+    ) -> Awaitable[SensorTelemetryResponse]: ...
+    def get_sensors_telemetry(
+        self,
+        site_id: int,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: SensorResolution | None = None,
+    ) -> Any:
+        """Return irradiance, temperature and wind readings for all sensors.
+
+        Keyed by sensor ``id``, as listed by ``get_devices(types="SENSOR")``.
+        DAY, WEEK and MONTH allow up to 1 month.
+        """
+        return self._call(ep.sensor_telemetry(site_id, start, end, resolution))
 
     # --- status --------------------------------------------------------------
 

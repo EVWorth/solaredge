@@ -222,6 +222,28 @@ ENDPOINTS: list[tuple[str, dict[str, Any], str, str, Params]] = [
         f"/sites/1/storage/{SN}/telemetry",
         RANGE,
     ),
+    (
+        "get_ev_chargers_telemetry",
+        {"site_id": 1},
+        "GET",
+        "/sites/1/ev-chargers/telemetry",
+        [],
+    ),
+    (
+        "get_ev_chargers_telemetry",
+        {"site_id": 1, **WIN, "resolution": "TOTAL", "serial_numbers": [SN, "B-2"]},
+        "GET",
+        f"/sites/1/ev-chargers/{SN},B-2/telemetry",
+        [*RANGE, ("resolution", "TOTAL")],
+    ),
+    ("get_sensors_telemetry", {"site_id": 1}, "GET", "/sites/1/sensors/telemetry", []),
+    (
+        "get_sensors_telemetry",
+        {"site_id": 1, **WIN, "resolution": "MONTH"},
+        "GET",
+        "/sites/1/sensors/telemetry",
+        [*RANGE, ("resolution", "MONTH")],
+    ),
     # --- status
     ("get_inverters_status", {"site_id": 1}, "GET", "/sites/1/inverters/status", []),
     (
@@ -376,6 +398,9 @@ SPEC_OPERATIONS = {
     ("GET", "/sites/{id}/alerts"),
     ("GET", "/sites/{id}/devices"),
     ("GET", "/sites/{id}/devices/{sn}"),
+    ("GET", "/sites/{id}/ev-chargers/telemetry"),
+    ("GET", "/sites/{id}/ev-chargers/{sn}/telemetry"),
+    ("GET", "/sites/{id}/sensors/telemetry"),
     *(
         ("GET", f"/sites/{{id}}/{family}{sn}/{kind}")
         for family in ("inverters", "meters", "storage")
@@ -429,7 +454,14 @@ def _template(path: str) -> str:
     parts = path.split("/")
     if len(parts) > 2 and parts[1] == "sites":
         parts[2] = "{id}"
-    if len(parts) > 4 and parts[3] in ("inverters", "meters", "storage", "devices"):
+    if len(parts) > 4 and parts[3] in (
+        "inverters",
+        "meters",
+        "storage",
+        "devices",
+        "ev-chargers",
+        "sensors",
+    ):
         if parts[4] not in ("telemetry", "status", "lifetime-energy"):
             parts[4] = "{sn}"
     return "/".join(parts)
@@ -585,8 +617,8 @@ class TestEndpoints:
         assert result == {"ok": True}
 
     def test_every_spec_operation_is_covered(self):
-        """Each of the 56 documented operations has a tested method."""
-        assert len(SPEC_OPERATIONS) == 56
+        """Each of the 59 documented operations has a tested method."""
+        assert len(SPEC_OPERATIONS) == 59
         tested = {
             (method, _template(path))
             for name, _, method, path, _ in ENDPOINTS
