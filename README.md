@@ -344,7 +344,8 @@ to `main`, creates the tag and GitHub release, and publishes to PyPI.
 - **The PR title decides the release.** PRs are squash-merged, so the title
   becomes the commit commitizen reads. Give it the right type, and mark breaking
   changes with `!` (e.g. `feat!: ...`) or a `BREAKING CHANGE:` footer in the
-  squash message.
+  squash message. A CI check rejects titles that aren't conventional commits.
+  To merge without releasing, use a non-release type like `docs:` or `ci:`.
 - **Don't bump or tag by hand.** No local `cz bump`, no bump PRs, no manual
   tags or GitHub releases. CI picks the version.
 - **If a release fails partway**, e.g. PyPI was down after the tag was

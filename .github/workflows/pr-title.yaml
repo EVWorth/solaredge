@@ -1,0 +1,32 @@
+name: PR title
+
+# PRs are squash-merged, so the title becomes the commit that commitizen reads
+# to decide the release (fix -> patch, feat -> minor, ! -> major; docs, ci,
+# chore and friends release nothing). Check it with the same rules.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install dependencies
+        run: uv sync --only-group dev
+
+      - name: Check the title is a conventional commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! uv run cz check --message "$TITLE"; then
+            echo "::error::PR title '$TITLE' is not a conventional commit. Use e.g. 'fix: ...', 'feat: ...', 'feat!: ...' for breaking changes, or 'docs:' / 'ci:' / 'chore:' to merge without a release."
+            exit 1
+          fi
