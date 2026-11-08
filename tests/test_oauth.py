@@ -5,6 +5,7 @@ import json
 import time
 import asyncio
 import threading
+import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
@@ -213,6 +214,7 @@ class TestTokenEndpoint:
         assert token.access_token == "access-1"
         assert token.refresh_token == "refresh-1"
         assert token.site_id == 42
+        assert token.expires_at is not None
         assert before + 7200 <= token.expires_at <= time.time() + 7200
 
     def test_refresh_token(self):

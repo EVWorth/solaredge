@@ -200,7 +200,9 @@ class Operations(ABC, Generic[R]):
 
     # --- inventory -----------------------------------------------------------
 
-    def get_devices(self, site_id: int, types: Iterable[DeviceType] | None = None) -> R:
+    def get_devices(
+        self, site_id: int, types: DeviceType | Iterable[DeviceType] | None = None
+    ) -> R:
         """Return the site's devices. The API returns only inverters by default."""
         return self._call(ep.devices(site_id, types))
 
@@ -318,7 +320,7 @@ class Operations(ABC, Generic[R]):
         start: datetime,
         end: datetime,
         serial_numbers: Iterable[str] | None = None,
-        meters: Iterable[MeterType] | None = None,
+        meters: MeterType | Iterable[MeterType] | None = None,
     ) -> R:
         """Return lifetime counters for all, or the given, meters.
 
@@ -345,8 +347,15 @@ class Operations(ABC, Generic[R]):
     # --- per-inverter measurements -------------------------------------------
 
     def _inverter(
-        self, site_id, serial_number, metric, start, end, resolution, unit=None
-    ):
+        self,
+        site_id: int,
+        serial_number: str,
+        metric: str,
+        start: datetime | None,
+        end: datetime | None,
+        resolution: str | None,
+        unit: str | None = None,
+    ) -> R:
         return self._call(
             ep.device_measurement(
                 site_id,
@@ -453,7 +462,16 @@ class Operations(ABC, Generic[R]):
 
     # --- per-meter measurements ----------------------------------------------
 
-    def _meter(self, site_id, serial_number, metric, start, end, resolution, unit):
+    def _meter(
+        self,
+        site_id: int,
+        serial_number: str,
+        metric: str,
+        start: datetime | None,
+        end: datetime | None,
+        resolution: str | None,
+        unit: str | None,
+    ) -> R:
         return self._call(
             ep.device_measurement(
                 site_id, "meters", serial_number, metric, start, end, resolution, unit
@@ -574,7 +592,16 @@ class Operations(ABC, Generic[R]):
 
     # --- per-battery measurements --------------------------------------------
 
-    def _battery(self, site_id, serial_number, metric, start, end, resolution, unit):
+    def _battery(
+        self,
+        site_id: int,
+        serial_number: str,
+        metric: str,
+        start: datetime | None,
+        end: datetime | None,
+        resolution: str | None,
+        unit: str | None,
+    ) -> R:
         return self._call(
             ep.device_measurement(
                 site_id, "storage", serial_number, metric, start, end, resolution, unit
