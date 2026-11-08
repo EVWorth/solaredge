@@ -37,7 +37,7 @@ jobs:
         run: uv sync
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=src/solaredge --cov-branch --cov-fail-under=90
+        run: uv run pytest --cov=src/solaredge --cov-branch --cov-fail-under=100
 
   typecheck:
     runs-on: ubuntu-latest
