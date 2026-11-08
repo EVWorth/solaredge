@@ -37,6 +37,7 @@ from .exceptions import (
     SolarEdgeAPIError,
     SolarEdgeResponseError,
     SolarEdgeValidationError,
+    request_url,
     error_from_response,
 )
 
@@ -307,7 +308,7 @@ def _oauth_error(response: httpx.Response) -> SolarEdgeAPIError:
             message,
             status_code=response.status_code,
             response_body=body,
-            url=str(response.request.url),
+            url=request_url(response),
             error=error,
             error_description=description,
         )
@@ -555,8 +556,6 @@ class OAuth2(httpx.Auth):
         If another request already refreshed while this one waited for the
         lock, the token has moved on and no further refresh is needed.
         """
-        if not self.can_refresh:
-            return False
         if used is not None and used != self._token.access_token:
             return False
         return used is not None or self._token.is_expired()
@@ -592,9 +591,11 @@ class OAuth2(httpx.Auth):
                 if self._needs_refresh(used):
                     token = self._store((yield self._refresh_request()))
                     self._notify_sync(token)
-            if self._token.access_token != used:
-                self._authorize(request)
-                yield request
+            # Always retry once: with the token another request refreshed, or
+            # with ours. Ending here instead would hand the caller the token
+            # endpoint's response rather than the API's.
+            self._authorize(request)
+            yield request
 
     async def async_auth_flow(
         self, request: httpx.Request
@@ -616,9 +617,9 @@ class OAuth2(httpx.Auth):
                     refreshed = yield self._refresh_request()
                     await refreshed.aread()
                     await self._notify_async(self._store(refreshed))
-            if self._token.access_token != used:
-                self._authorize(request)
-                yield request
+            # Always retry once; see sync_auth_flow.
+            self._authorize(request)
+            yield request
 
     def _get_async_lock(self) -> asyncio.Lock:
         if self._async_lock is None:
